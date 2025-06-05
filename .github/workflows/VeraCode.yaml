@@ -2,7 +2,7 @@ name: All-Tools
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -10,21 +10,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-
+          node-version: '12.x'
       - name: Install dependencies
         run: npm install
-
       - name: Empacotamento dos arquivos
         uses: thedoctor0/zip-release@master
         with:
           filename: 'veracode.zip'
           path: .
-
       - name: Publicando Artefato
         uses: actions/upload-artifact@v4
         with:
@@ -49,8 +45,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: pacoteVeracode
-          path: .
-
       - name: Veracode REST API
         env:
           VERACODE_ID: ${{ secrets.VID }}
@@ -62,7 +56,7 @@ jobs:
               URLPATH=$1
               METHOD=$2
               NONCE="$(cat /dev/urandom | xxd -p | head -c 32)"
-              TS="$(($(date +%s%N)/1000))"
+              TS="$(($(date +%s%N)/1000000))"
               encryptedNonce=$(echo "$NONCE" | xxd -r -p | openssl dgst -sha256 -mac HMAC -macopt hexkey:$VERACODE_KEY | cut -d ' ' -f 2)
               encryptedTimestamp=$(echo -n "$TS" | openssl dgst -sha256 -mac HMAC -macopt hexkey:$encryptedNonce | cut -d ' ' -f 2)
               signingKey=$(echo -n "vcode_request_version_1" | openssl dgst -sha256 -mac HMAC -macopt hexkey:$encryptedTimestamp | cut -d ' ' -f 2)
@@ -75,12 +69,14 @@ jobs:
           METHOD=GET
           aut_Veracode $URLPATH $METHOD
           curl -s -X $METHOD -H "Authorization: $VERACODE_AUTH_HEADER" "https://analysiscenter.veracode.com$URLPATH" -o applist.xml
-
-          while read -r line; do
+          while read -r line
+          do
               app_name=$(echo $line | grep -Po 'app_name="\K.*?(?=")')
               AppID=$(echo $line | grep -Po 'app_id="\K.*?(?=")')
-              if [ "$app_name" = "$veracodeAppName" ]; then break; fi
-          done < <(grep "$veracodeAppName" applist.xml)
+              if [ "$app_name" = "$veracodeAppName" ]; then 
+                break
+              fi
+          done < <(grep $veracodeAppName applist.xml)
 
           URLPATH=/api/5.0/uploadfile.do
           METHOD=POST
@@ -102,13 +98,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: pacoteVeracode
-          path: .
-
       - uses: veracode/veracode-uploadandscan-action@master
+        env:
+          VID: ${{ secrets.VID }}
+          VKEY: ${{ secrets.VKEY }}
+          AppName: Github Actions - ${{ github.repository }}
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
-          appname: Github Actions - ${{ github.repository }}
+          criticality: 'VeryHigh'
+          appname: ${{ env.AppName }}
           createprofile: true
           sandboxname: 'API'
           createsandbox: true
@@ -124,8 +123,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: pacoteVeracode
-          path: .
-
       - name: Veracode Pipeline Scan
         env:
           VID: ${{ secrets.VID }}
