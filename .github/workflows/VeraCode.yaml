@@ -185,6 +185,7 @@ jobs:
             echo "⚠️ Nenhuma stack detectada formalmente. Fallback geral!"
             mkdir -p output && rsync -av --progress ./ ./output --exclude output
             echo "artifact_path=output" >> $GITHUB_OUTPUT
+          fi
 
       - name: Package build output
         run: |
