@@ -152,7 +152,7 @@ jobs:
   pipeline_scan:
     name: Veracode Pipeline Scan (CLI)
     runs-on: ubuntu-latest
-    needs: sca
+    needs: detect_build_package
 
     steps:
       - name: Download artifact
@@ -182,7 +182,7 @@ jobs:
   sast:
     name: Veracode Upload and Scan (SAST)
     runs-on: ubuntu-latest
-    needs: pipeline_scan
+    needs: detect_build_package
 
     steps:
       - name: Download artifact
