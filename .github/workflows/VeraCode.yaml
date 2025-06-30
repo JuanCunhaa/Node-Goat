@@ -1,4 +1,4 @@
-name: Veracode Unified Workflow (Auto Detect)
+name: Veracode Unified Workflow
 
 on:
   push:
@@ -8,67 +8,97 @@ on:
 
 jobs:
   detect_build_package:
-    name: Detect Build and Package
+    name: Detect, Build and Package
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1️⃣ Detect e Build
       - name: Detect language and build
         id: build
+        shell: bash
         run: |
-          echo "🕵️ Detectando linguagem..."
+          echo "🔍 Detectando linguagem..."
 
           if [ -f "pom.xml" ]; then
-            echo "Java Maven detectado"
+            echo "➡️ Java Maven detectado"
             mvn clean package
             echo "artifact_path=target/*.jar" >> $GITHUB_OUTPUT
 
           elif [ -f "build.gradle" ]; then
-            echo "Java Gradle detectado"
+            echo "➡️ Java Gradle detectado"
             gradle build
             echo "artifact_path=build/libs/*.jar" >> $GITHUB_OUTPUT
 
           elif ls *.sln 1> /dev/null 2>&1; then
-            echo ".NET Solution detectado"
+            echo "➡️ .NET detectado"
+            dotnet restore
             dotnet build --configuration Release
             echo "artifact_path=$(find . -type f -name '*.dll')" >> $GITHUB_OUTPUT
 
           elif [ -f "package.json" ]; then
-            echo "Node.js detectado"
+            echo "➡️ Node.js detectado"
             npm install
             npm run build || echo "Sem script build, ignorando"
             mkdir -p output
-            cp -r * output/
+            rsync -av --progress ./ ./output --exclude output --exclude node_modules
             echo "artifact_path=output" >> $GITHUB_OUTPUT
 
           elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ]; then
-            echo "Python detectado"
+            echo "➡️ Python detectado"
             mkdir -p output
-            cp -r * output/
+            rsync -av --progress ./ ./output --exclude output
             echo "artifact_path=output" >> $GITHUB_OUTPUT
+
+          elif [ -f "composer.json" ]; then
+            echo "➡️ PHP detectado"
+            mkdir -p output
+            rsync -av --progress ./ ./output --exclude output --exclude vendor
+            echo "artifact_path=output" >> $GITHUB_OUTPUT
+
+          elif [ -f "Gemfile" ]; then
+            echo "➡️ Ruby detectado"
+            bundle install
+            mkdir -p output
+            rsync -av --progress ./ ./output --exclude output --exclude vendor
+            echo "artifact_path=output" >> $GITHUB_OUTPUT
+
+          elif [ -f "go.mod" ]; then
+            echo "➡️ Go detectado"
+            go mod tidy
+            go build -o app-binary
+            mkdir -p output
+            mv app-binary output/
+            echo "artifact_path=output" >> $GITHUB_OUTPUT
+
+          elif ls *.cpp 1> /dev/null 2>&1 || ls *.c 1> /dev/null 2>&1; then
+            echo "➡️ C/C++ detectado"
+            mkdir -p build
+            gcc *.c -o build/app || g++ *.cpp -o build/app
+            echo "artifact_path=build/app" >> $GITHUB_OUTPUT
+
+          elif [ -f "build.gradle" ] && grep -q "com.android.application" build.gradle; then
+            echo "➡️ Android detectado"
+            ./gradlew assembleDebug
+            echo "artifact_path=app/build/outputs/apk/debug/*.apk" >> $GITHUB_OUTPUT
 
           else
             echo "❌ Nenhuma stack suportada detectada"
             exit 1
           fi
 
-      # 2️⃣ Empacotamento ZIP (se necessário)
       - name: Package build output
         run: |
           echo "📦 Empacotando..."
           zip -r veracode.zip ${{ steps.build.outputs.artifact_path }}
 
-      # 3️⃣ Publica artefato para outros Jobs
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: veracode-package
           path: veracode.zip
 
-  # 🔍 SCA Scan
   sca:
     name: Veracode SCA
     runs-on: ubuntu-latest
@@ -83,9 +113,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           srcclear_token: ${{ secrets.SCA }}
 
-  # 🗂️ Upload and Scan (SAST)
   sast:
-    name: Veracode Upload and Scan
+    name: Veracode Upload and Scan (SAST)
     runs-on: ubuntu-latest
     needs: detect_build_package
 
@@ -106,7 +135,6 @@ jobs:
           version: ${{ github.run_id }}
           deleteIncompleteScan: false
 
-  # 🏃 Pipeline Scan
   pipeline_scan:
     name: Veracode Pipeline Scan
     runs-on: ubuntu-latest
