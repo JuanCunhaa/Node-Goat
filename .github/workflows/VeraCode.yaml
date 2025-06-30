@@ -1,134 +1,134 @@
-name: All-Tools
+name: Veracode Unified Workflow (Auto Detect)
 
 on:
   push:
-    branches: [ master ]
-
+    branches: [ main ]
+  pull_request:
   workflow_dispatch:
 
 jobs:
-  build:
+  detect_build_package:
+    name: Detect Build and Package
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Use Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20.x'
-      - name: Install dependencies
-        run: npm install
-      - name: Empacotamento dos arquivos
-        uses: thedoctor0/zip-release@master
-        with:
-          filename: 'veracode.zip'
-          path: .
-      - name: Publicando Artefato
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1️⃣ Detect e Build
+      - name: Detect language and build
+        id: build
+        run: |
+          echo "🕵️ Detectando linguagem..."
+
+          if [ -f "pom.xml" ]; then
+            echo "Java Maven detectado"
+            mvn clean package
+            echo "artifact_path=target/*.jar" >> $GITHUB_OUTPUT
+
+          elif [ -f "build.gradle" ]; then
+            echo "Java Gradle detectado"
+            gradle build
+            echo "artifact_path=build/libs/*.jar" >> $GITHUB_OUTPUT
+
+          elif ls *.sln 1> /dev/null 2>&1; then
+            echo ".NET Solution detectado"
+            dotnet build --configuration Release
+            echo "artifact_path=$(find . -type f -name '*.dll')" >> $GITHUB_OUTPUT
+
+          elif [ -f "package.json" ]; then
+            echo "Node.js detectado"
+            npm install
+            npm run build || echo "Sem script build, ignorando"
+            mkdir -p output
+            cp -r * output/
+            echo "artifact_path=output" >> $GITHUB_OUTPUT
+
+          elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ]; then
+            echo "Python detectado"
+            mkdir -p output
+            cp -r * output/
+            echo "artifact_path=output" >> $GITHUB_OUTPUT
+
+          else
+            echo "❌ Nenhuma stack suportada detectada"
+            exit 1
+          fi
+
+      # 2️⃣ Empacotamento ZIP (se necessário)
+      - name: Package build output
+        run: |
+          echo "📦 Empacotando..."
+          zip -r veracode.zip ${{ steps.build.outputs.artifact_path }}
+
+      # 3️⃣ Publica artefato para outros Jobs
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pacoteVeracode
+          name: veracode-package
           path: veracode.zip
-  
-  Veracode_SCA:
+
+  # 🔍 SCA Scan
+  sca:
+    name: Veracode SCA
     runs-on: ubuntu-latest
+    needs: detect_build_package
+
     steps:
       - uses: actions/checkout@v4
-      - name: Veracode SCA
-        env:
-          SRCCLR_API_TOKEN: ${{ secrets.SCA }} # Lembrar de criar as credenciais no Secrets
-        run: |
-          curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s -- scan --update-advisor --pull-request
-      
-  Veracode_REST_API:
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Download Artefato
-        uses: actions/download-artifact@v4
-        with:
-          name: pacoteVeracode
-      - name: Veracode REST API
-        env:
-          VERACODE_ID: ${{ secrets.VID }} # Lembrar de criar as credenciais no Secrets
-          VERACODE_KEY: ${{ secrets.VKEY }}
-          veracodeAppName: Github Actions - ${{ github.repository }}
-          CaminhoArquivo: './veracode.zip'
-        run: |
-          aut_Veracode () {
-              URLPATH=$1
-              METHOD=$2
-              NONCE="$(cat /dev/random | xxd -p | head -c 32)"
-              TS="$(($(date +%s%N)/1000))"
-              encryptedNonce=$(echo "$NONCE" | xxd -r -p | openssl dgst -sha256 -mac HMAC -macopt hexkey:$VERACODE_KEY | cut -d ' ' -f 2)
-              encryptedTimestamp=$(echo -n "$TS" | openssl dgst -sha256 -mac HMAC -macopt hexkey:$encryptedNonce | cut -d ' ' -f 2)
-              signingKey=$(echo -n "vcode_request_version_1" | openssl dgst -sha256 -mac HMAC -macopt hexkey:$encryptedTimestamp | cut -d ' ' -f 2)
-              DATA="id=$VERACODE_ID&host=analysiscenter.veracode.com&url=$URLPATH&method=$METHOD"
-              signature=$(echo -n "$DATA" | openssl dgst -sha256 -mac HMAC -macopt hexkey:$signingKey | cut -d ' ' -f 2)
-              VERACODE_AUTH_HEADER="VERACODE-HMAC-SHA-256 id=$VERACODE_ID,ts=$TS,nonce=$NONCE,sig=$signature"
-          }
-          URLPATH=/api/5.0/getapplist.do
-          METHOD=GET
-          aut_Veracode $URLPATH $METHOD
-          curl -s -X $METHOD -H "Authorization: $VERACODE_AUTH_HEADER" "https://analysiscenter.veracode.com$URLPATH" -o applist.xml
-          while read -r line
-          do
-              app_name=$(echo $line | grep -Po 'app_name="\K.*?(?=")')
-              AppID=$(echo $line | grep -Po 'app_id="\K.*?(?=")')
-              if [ "$app_name" = "$veracodeAppName" ]; then 
-              break
-              fi
-          done < <(grep $veracodeAppName applist.xml)
-          URLPATH=/api/5.0/uploadfile.do
-          METHOD=POST
-          aut_Veracode $URLPATH $METHOD
-          echo "Fazendo o Upload do arquivo: $CaminhoArquivo"
-          curl -X $METHOD -H "Authorization: $VERACODE_AUTH_HEADER" "https://analysiscenter.veracode.com$URLPATH" -F "app_id=$AppID" -F "file=@$CaminhoArquivo"
-          URLPATH=/api/5.0/beginprescan.do
-          METHOD=POST
-          aut_Veracode $URLPATH $METHOD
-          echo "   "
-          echo "Iniciando o scan no perfil: $veracodeAppName ID: $AppID"
-          curl -X $METHOD -H "Authorization: $VERACODE_AUTH_HEADER" "https://analysiscenter.veracode.com$URLPATH" -F "app_id=$AppID" -F "auto_scan=true"
 
-  Veracode_Wrapper:
+      - name: Veracode SCA
+        uses: veracode/veracode-sca@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          srcclear_token: ${{ secrets.SCA }}
+
+  # 🗂️ Upload and Scan (SAST)
+  sast:
+    name: Veracode Upload and Scan
     runs-on: ubuntu-latest
-    needs: build
+    needs: detect_build_package
+
     steps:
-      - name: Download Artefato
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: pacoteVeracode
-      - uses: veracode/veracode-uploadandscan-action@master # Faz a analise da Veracode
-        env:
-          VID: ${{ secrets.VID }} # Lembrar de criar as credenciais no Secrets
-          VKEY: ${{ secrets.VKEY }}
-          AppName: Github Actions - ${{ github.repository }}
+          name: veracode-package
+
+      - name: Veracode Upload and Scan
+        uses: veracode/veracode-uploadandscan-action@master
         with:
-          with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
-          criticality: 'VeryHigh'
-          appname: '$AppName'
+          appname: 'Github - ${{ github.repository }}'
           createprofile: true
-          sandboxname: 'API'
-          createsandbox: true
           filepath: 'veracode.zip'
-          deleteIncompleteScan: false
           version: ${{ github.run_id }}
-  
-  Veracode_PipelineScan:
+          deleteIncompleteScan: false
+
+  # 🏃 Pipeline Scan
+  pipeline_scan:
+    name: Veracode Pipeline Scan
     runs-on: ubuntu-latest
-    needs: build
+    needs: detect_build_package
+
     steps:
-      - name: Download Artefato
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: pacoteVeracode
-      - name: Veracode Pipeline Scan
-        env:
-          VID: ${{ secrets.VID }} # Lembrar de criar as credenciais no Secrets
-          VKEY: ${{ secrets.VKEY }}
-          CaminhoArquivo: './veracode.zip'
+          name: veracode-package
+
+      - name: Run Veracode Pipeline Scan
         run: |
           curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
           unzip pipeline-scan-LATEST.zip
-          java -jar pipeline-scan.jar -vid $VID -vkey $VKEY -f $CaminhoArquivo
+          java -jar pipeline-scan.jar -vid ${{ secrets.VID }} -vkey ${{ secrets.VKEY }} -f veracode.zip -o results.json
+
+      - name: Convert results to SARIF
+        run: |
+          jq '{runs:[{tool:{driver:{name:"Veracode Pipeline Scan"}}, results:.findings}]}' results.json > results.sarif
+
+      - name: Upload SARIF to GitHub
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: results.sarif
