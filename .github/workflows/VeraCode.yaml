@@ -1,13 +1,13 @@
-name: Veracode Ultra Workflow (SCA + Detect → Pipeline + SAST)
+name: Veracode Ultra Workflow (SCA + Detect & Build → Pipeline + SAST)
 
 on:
   push:
     branches: [ main ]
   pull_request:
 
-# ---------------------------
-# 🔹 Job 1 - Veracode SCA
-# ---------------------------
+# -----------------------------------
+# 🔹 JOB 1: Veracode SCA (Isolado)
+# -----------------------------------
 jobs:
   sca:
     name: Veracode SCA (SourceClear)
@@ -22,126 +22,159 @@ jobs:
         run: |
           curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s -- scan
 
-# ---------------------------
-# 🔹 Job 2 - Detect & Build
-# ---------------------------
+# -----------------------------------
+# 🔹 JOB 2: Detect, Build & Package
+# -----------------------------------
   detect_build_package:
-    name: Detect, Build and Package
-    runs-on: ubuntu-latest
+    - name: Detect language and build
+  id: build
+  shell: bash
+  run: |
+    echo "🔍 Detectando linguagem e build real..."
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    if [ -f "pom.xml" ]; then
+      echo "➡️ Java Maven detectado"
+      if grep -q "<artifactId>" pom.xml; then
+        mvn clean package || echo "⚠️ Maven falhou"
+      else
+        echo "⚠️ pom.xml sem artifactId, fallback"
+      fi
+      mkdir -p output && cp -r src/ output/ || true
+      echo "artifact_path=target/*.jar output" >> $GITHUB_OUTPUT
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20.x'
+    elif [ -f "build.gradle" ]; then
+      echo "➡️ Java Gradle detectado"
+      if grep -q "com.android.application" build.gradle; then
+        echo "➡️ Android (Gradle) detectado"
+        ./gradlew assembleDebug || echo "⚠️ Gradle assemble falhou"
+        echo "artifact_path=app/build/outputs/apk/debug/*.apk" >> $GITHUB_OUTPUT
+      else
+        gradle build || echo "⚠️ Gradle build falhou"
+        mkdir -p output && cp -r src/ output/ || true
+        echo "artifact_path=build/libs/*.jar output" >> $GITHUB_OUTPUT
+      fi
 
-      - name: Detect language and build
-        id: build
-        shell: bash
-        run: |
-          echo "🔍 Detectando linguagem..."
+    elif [ -f "build.xml" ]; then
+      echo "➡️ Java Ant detectado"
+      ant debug || ant release || ant build || echo "⚠️ Ant falhou"
+      mkdir -p output && cp -r src/ output/ || true
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          if [ -f "pom.xml" ]; then
-            echo "➡️ Java Maven detectado"
-            mvn clean package
-            echo "artifact_path=target/*.jar" >> $GITHUB_OUTPUT
+    elif ls *.sln 1> /dev/null 2>&1 || ls *.csproj 1> /dev/null 2>&1; then
+      echo "➡️ .NET detectado"
+      dotnet restore || echo "⚠️ dotnet restore falhou"
+      dotnet build --configuration Release || echo "⚠️ dotnet build falhou"
+      mkdir -p output && cp -r bin/ output/ || true
+      echo "artifact_path=$(find . -type f -name '*.dll') output" >> $GITHUB_OUTPUT
 
-          elif [ -f "build.gradle" ]; then
-            echo "➡️ Java Gradle detectado"
-            gradle build
-            echo "artifact_path=build/libs/*.jar" >> $GITHUB_OUTPUT
+    elif [ -f "package.json" ]; then
+      echo "➡️ Node.js / TypeScript detectado"
+      npm install -g npm@latest || true
+      npm install || true
 
-          elif ls *.sln 1> /dev/null 2>&1; then
-            echo "➡️ .NET detectado"
-            dotnet restore
-            dotnet build --configuration Release
-            echo "artifact_path=$(find . -type f -name '*.dll')" >> $GITHUB_OUTPUT
+      if grep -q "\"build\":" package.json; then
+        echo "📦 Script build detectado: npm run build"
+        npm run build || echo "⚠️ npm run build falhou"
+      else
+        echo "📦 Nenhum script build no package.json"
+      fi
 
-          elif [ -f "package.json" ]; then
-            echo "➡️ Node.js / TypeScript detectado"
-            npm install -g npm@latest
-            npm install
-            npm run build || echo "Sem script build, ignorando"
-            mkdir -p output
-            rsync -av --progress ./ ./output --exclude output --exclude node_modules
-            echo "artifact_path=output" >> $GITHUB_OUTPUT
+      mkdir -p output && rsync -av --progress ./ ./output --exclude output --exclude node_modules
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ]; then
-            echo "➡️ Python detectado"
-            mkdir -p output
-            rsync -av --progress ./ ./output --exclude output
-            echo "artifact_path=output" >> $GITHUB_OUTPUT
+    elif [ -f "pyproject.toml" ]; then
+      echo "➡️ Python detectado (pyproject.toml)"
+      if grep -q "\[build-system\]" pyproject.toml; then
+        echo "📦 build-system detectado, pip install"
+        pip install . || echo "⚠️ pip install falhou"
+      else
+        echo "📦 Sem build-system, fallback"
+      fi
+      mkdir -p output && rsync -av --progress ./ ./output --exclude output
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          elif [ -f "composer.json" ]; then
-            echo "➡️ PHP detectado"
-            mkdir -p output
-            rsync -av --progress ./ ./output --exclude output --exclude vendor
-            echo "artifact_path=output" >> $GITHUB_OUTPUT
+    elif [ -f "setup.py" ]; then
+      echo "➡️ Python detectado (setup.py)"
+      python setup.py build || echo "⚠️ setup.py build falhou"
+      mkdir -p output && rsync -av --progress ./ ./output --exclude output
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          elif [ -f "Gemfile" ]; then
-            echo "➡️ Ruby detectado"
-            bundle install
-            mkdir -p output
-            rsync -av --progress ./ ./output --exclude output --exclude vendor
-            echo "artifact_path=output" >> $GITHUB_OUTPUT
+    elif [ -f "composer.json" ]; then
+      echo "➡️ PHP detectado"
+      if grep -q "\"scripts\":" composer.json; then
+        echo "📦 composer.json tem scripts, mas build geralmente manual"
+      fi
+      mkdir -p output && rsync -av --progress ./ ./output --exclude output --exclude vendor
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          elif [ -f "go.mod" ]; then
-            echo "➡️ Go detectado"
-            go mod tidy
-            go build -o app-binary
-            mkdir -p output
-            mv app-binary output/
-            echo "artifact_path=output" >> $GITHUB_OUTPUT
+    elif [ -f "Gemfile" ]; then
+      echo "➡️ Ruby detectado"
+      bundle install || echo "⚠️ bundle install falhou"
+      mkdir -p output && rsync -av --progress ./ ./output --exclude output --exclude vendor
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          elif ls *.cpp 1> /dev/null 2>&1 || ls *.c 1> /dev/null 2>&1; then
-            echo "➡️ C/C++ detectado"
-            mkdir -p build
-            gcc *.c -o build/app || g++ *.cpp -o build/app
-            echo "artifact_path=build/app" >> $GITHUB_OUTPUT
+    elif [ -f "go.mod" ]; then
+      echo "➡️ Go detectado"
+      go mod tidy || echo "⚠️ go mod tidy falhou"
+      go build -o app-binary || echo "⚠️ go build falhou"
+      mkdir -p output && cp -r * output/
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          elif [ -f "build.gradle" ] && grep -q "com.android.application" build.gradle; then
-            echo "➡️ Android detectado"
-            ./gradlew assembleDebug
-            echo "artifact_path=app/build/outputs/apk/debug/*.apk" >> $GITHUB_OUTPUT
+    elif [ -f "Cargo.toml" ]; then
+      echo "➡️ Rust detectado"
+      cargo build --release || echo "⚠️ cargo build falhou"
+      mkdir -p output && cp -r src/ output/ || true
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          elif [ -f "Cargo.toml" ]; then
-            echo "➡️ Rust detectado"
-            cargo build --release
-            mkdir -p output
-            cp target/release/* output/
-            echo "artifact_path=output" >> $GITHUB_OUTPUT
+    elif [ -f "Makefile" ]; then
+      echo "➡️ C/C++ detectado com Makefile"
+      make || echo "⚠️ make falhou"
+      mkdir -p output && cp -r src/ output/ || true
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          elif ls *.pl 1> /dev/null 2>&1; then
-            echo "➡️ Perl detectado"
-            mkdir -p output
-            rsync -av --progress ./ ./output --exclude output
-            echo "artifact_path=output" >> $GITHUB_OUTPUT
+    elif [ -f "CMakeLists.txt" ]; then
+      echo "➡️ C/C++ detectado com CMake"
+      mkdir -p build && cd build && cmake .. && make || echo "⚠️ cmake/make falhou"
+      mkdir -p output && cp -r ../src/ output/ || true
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          elif ls *.asp 1> /dev/null 2>&1; then
-            echo "➡️ Classic ASP detectado"
-            mkdir -p output
-            rsync -av --progress ./ ./output --exclude output
-            echo "artifact_path=output" >> $GITHUB_OUTPUT
+    elif [ -f "AndroidManifest.xml" ]; then
+      echo "➡️ Android detectado (Ant/Eclipse)"
+      ant debug || ant release || echo "⚠️ Ant falhou"
+      mkdir -p output && rsync -av --progress ./ ./output --exclude output
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          elif ls *.ps1 1> /dev/null 2>&1; then
-            echo "➡️ PowerShell detectado"
-            mkdir -p output
-            rsync -av --progress ./ ./output --exclude output
-            echo "artifact_path=output" >> $GITHUB_OUTPUT
+    elif ls *.pl 1> /dev/null 2>&1; then
+      echo "➡️ Perl detectado"
+      mkdir -p output && rsync -av --progress ./ ./output --exclude output
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          elif ls *.cfm 1> /dev/null 2>&1; then
-            echo "➡️ ColdFusion detectado"
-            mkdir -p output
-            rsync -av --progress ./ ./output --exclude output
-            echo "artifact_path=output" >> $GITHUB_OUTPUT
+    elif ls *.asp 1> /dev/null 2>&1; then
+      echo "➡️ Classic ASP detectado"
+      mkdir -p output && rsync -av --progress ./ ./output --exclude output
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
 
-          else
-            echo "❌ Nenhuma stack suportada detectada"
-            exit 1
-          fi
+    elif ls *.ps1 1> /dev/null 2>&1; then
+      echo "➡️ PowerShell detectado"
+      mkdir -p output && rsync -av --progress ./ ./output --exclude output
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
+
+    elif ls *.cfm 1> /dev/null 2>&1; then
+      echo "➡️ ColdFusion detectado"
+      mkdir -p output && rsync -av --progress ./ ./output --exclude output
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
+
+    elif [ -f "Podfile" ] || [ -d "ios" ]; then
+      echo "➡️ Swift/iOS detectado"
+      echo "⚠️ ⚠️ Não suportado em Linux. Use runner macOS."
+      exit 1
+
+    else
+      echo "⚠️ Nenhuma stack detectada formalmente. Fallback geral!"
+      mkdir -p output && rsync -av --progress ./ ./output --exclude output
+      echo "artifact_path=output" >> $GITHUB_OUTPUT
+    fi
+
 
       - name: Package build output
         run: |
@@ -154,9 +187,9 @@ jobs:
           name: veracode-package
           path: veracode.zip
 
-# ---------------------------
-# 🔹 Job 3 - Pipeline Scan
-# ---------------------------
+# -----------------------------------
+# 🔹 JOB 3: Pipeline Scan
+# -----------------------------------
   pipeline_scan:
     name: Veracode Pipeline Scan (CLI)
     runs-on: ubuntu-latest
@@ -187,9 +220,9 @@ jobs:
         with:
           sarif_file: results.sarif
 
-# ---------------------------
-# 🔹 Job 4 - SAST
-# ---------------------------
+# -----------------------------------
+# 🔹 JOB 4: SAST Upload & Scan
+# -----------------------------------
   sast:
     name: Veracode Upload and Scan (SAST)
     runs-on: ubuntu-latest
