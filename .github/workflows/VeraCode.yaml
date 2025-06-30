@@ -1,15 +1,9 @@
-name: Veracode Ultra Workflow (Detect & Scan)
+name: Veracode Ultra Workflow (Detect → SCA → Pipeline → SAST)
 
 on:
   push:
     branches: [ main ]
   pull_request:
-
-# ✅ FLAGS DE CONTROLE NO TOPO — EDITA AQUI!
-env:
-  ENABLE_SAST: 'true'
-  ENABLE_SCA: 'true'
-  ENABLE_PIPELINE_SCAN: 'true'
 
 jobs:
   detect_build_package:
@@ -142,7 +136,6 @@ jobs:
           path: veracode.zip
 
   sca:
-    if: ${{ env.ENABLE_SCA == 'true' }}
     name: Veracode SCA (SourceClear)
     runs-on: ubuntu-latest
     needs: detect_build_package
@@ -156,34 +149,10 @@ jobs:
         run: |
           curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s -- scan
 
-  sast:
-    if: ${{ env.ENABLE_SAST == 'true' }}
-    name: Veracode Upload and Scan (SAST)
-    runs-on: ubuntu-latest
-    needs: detect_build_package
-
-    steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: veracode-package
-
-      - name: Upload and Scan with Veracode Action
-        uses: veracode/veracode-uploadandscan-action@master
-        with:
-          vid: ${{ secrets.VID }}
-          vkey: ${{ secrets.VKEY }}
-          appname: 'Github - ${{ github.repository }}'
-          createprofile: true
-          filepath: 'veracode.zip'
-          version: ${{ github.run_id }}
-          deleteIncompleteScan: false
-
   pipeline_scan:
-    if: ${{ env.ENABLE_PIPELINE_SCAN == 'true' }}
     name: Veracode Pipeline Scan (CLI)
     runs-on: ubuntu-latest
-    needs: detect_build_package
+    needs: sca
 
     steps:
       - name: Download artifact
@@ -209,3 +178,25 @@ jobs:
         uses: github/codeql-action/upload-sarif@v2
         with:
           sarif_file: results.sarif
+
+  sast:
+    name: Veracode Upload and Scan (SAST)
+    runs-on: ubuntu-latest
+    needs: pipeline_scan
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: veracode-package
+
+      - name: Upload and Scan with Veracode Action
+        uses: veracode/veracode-uploadandscan-action@master
+        with:
+          vid: ${{ secrets.VID }}
+          vkey: ${{ secrets.VKEY }}
+          appname: 'Github - ${{ github.repository }}'
+          createprofile: true
+          filepath: 'veracode.zip'
+          version: ${{ github.run_id }}
+          deleteIncompleteScan: false
