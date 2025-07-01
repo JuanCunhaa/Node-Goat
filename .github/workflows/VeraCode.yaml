@@ -212,7 +212,7 @@ jobs:
           path: veracode-ios.zip
 
   # 🔹 Pipeline Scan
-    pipeline_scan:
+  pipeline_scan:
     name: Veracode Pipeline Scan
     runs-on: ubuntu-latest
     needs: [build_auto, build_manual, build_manual_mac]
