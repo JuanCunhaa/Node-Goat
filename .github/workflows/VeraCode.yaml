@@ -132,6 +132,9 @@ jobs:
       needs.detect_stack.outputs.language == 'react_native' ||
       needs.detect_stack.outputs.language == 'python' ||
       needs.detect_stack.outputs.language == 'go'
+    defaults:
+      run:
+        working-directory: ${{ needs.detect_stack.outputs.build_path }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.2
