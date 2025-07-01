@@ -1,4 +1,4 @@
-name: Veracode Ultra Workflow (Robust Final)
+name: Veracode Ultra Workflow (Full Multi-Runner)
 
 on:
   push:
@@ -6,79 +6,106 @@ on:
   pull_request:
 
 jobs:
-  # -------------------------------
-  # 🔹 Job 1: SCA - SEMPRE LINUX
-  # -------------------------------
+
+  # -----------------------------
+  # 🔹 Veracode SCA
+  # -----------------------------
   sca:
     name: Veracode SCA (SourceClear)
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Run Veracode SCA (curl)
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run Veracode SCA
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SCA }}
         run: |
           curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s -- scan
 
-  # -------------------------------
-  # 🔹 Job 2: Detect Stack
-  # -------------------------------
+  # -----------------------------
+  # 🔹 Detect Stack + Dir
+  # -----------------------------
   detect_stack:
-    name: Detect Stack
+    name: Detect Project Stack
     runs-on: ubuntu-latest
     outputs:
       language: ${{ steps.detect.outputs.language }}
-
+      build_dir: ${{ steps.detect.outputs.build_dir }}
     steps:
-      - uses: actions/checkout@v4
-
+      - name: Checkout
+        uses: actions/checkout@v4
       - id: detect
+        name: Detect Language + Dir
         run: |
-          echo "🔍 Detectando stack..."
           lang="unknown"
+          build_dir="."
 
-          if [ -f "pom.xml" ]; then
-            lang="maven"
-          elif [ -f "build.gradle" ]; then
-            lang="gradle"
-          elif [ -f "build.xml" ]; then
-            lang="ant"
-          elif ls *.sln 1> /dev/null 2>&1 || ls *.csproj 1> /dev/null 2>&1; then
-            if grep -q "netcoreapp" *.csproj; then
-              lang="dotnet_core"
+          if path=$(find . -type f -name "pom.xml" | head -n 1); then
+            lang="maven"; build_dir=$(dirname "$path")
+            echo "✅ Maven Dir: $build_dir"
+          elif path=$(find . -type f -name "build.gradle" | head -n 1); then
+            lang="gradle"; build_dir=$(dirname "$path")
+            echo "✅ Gradle Dir: $build_dir"
+          elif path=$(find . -type f -name "build.gradle.kts" | head -n 1) || path=$(find . -type f -name "settings.gradle.kts" | head -n 1); then
+            lang="kotlin"; build_dir=$(dirname "$path")
+            echo "✅ Kotlin Dir: $build_dir"
+          elif path=$(find . -type f -name "build.xml" | head -n 1); then
+            lang="ant"; build_dir=$(dirname "$path")
+            echo "✅ Ant Dir: $build_dir"
+          elif find . -name "*.sln" | grep -q . || find . -name "*.csproj" | grep -q .; then
+            if grep -r -q "netcoreapp" ./*.csproj 2>/dev/null; then
+              lang="dotnet_core"; build_dir="."
+              echo "✅ .NET Core Dir: $build_dir"
             else
-              lang="dotnet_framework"
+              lang="dotnet_framework"; build_dir="."
+              echo "✅ .NET Framework Dir: $build_dir"
             fi
-          elif [ -f "package.json" ]; then
-            lang="node"
-          elif [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
-            lang="python"
-          elif [ -f "composer.json" ]; then
-            lang="php"
-          elif [ -f "Gemfile" ]; then
-            lang="ruby"
-          elif [ -f "go.mod" ]; then
-            lang="go"
-          elif [ -f "Cargo.toml" ]; then
-            lang="rust"
-          elif [ -f "Makefile" ] || [ -f "CMakeLists.txt" ]; then
-            lang="cpp"
-          elif [ -f "AndroidManifest.xml" ]; then
-            lang="android"
-          elif [ -f "Podfile" ] || [ -d "ios" ]; then
-            lang="ios"
+          elif path=$(find . -type f -name "package.json" | head -n 1); then
+            lang="node"; build_dir=$(dirname "$path")
+            echo "✅ Node Dir: $build_dir"
+          elif path=$(find . -type f -name "pyproject.toml" | head -n 1) || path=$(find . -type f -name "setup.py" | head -n 1); then
+            lang="python"; build_dir=$(dirname "$path")
+            echo "✅ Python Dir: $build_dir"
+          elif path=$(find . -type f -name "composer.json" | head -n 1); then
+            lang="php"; build_dir=$(dirname "$path")
+            echo "✅ PHP Dir: $build_dir"
+          elif path=$(find . -type f -name "Gemfile" | head -n 1); then
+            lang="ruby"; build_dir=$(dirname "$path")
+            echo "✅ Ruby Dir: $build_dir"
+          elif path=$(find . -type f -name "go.mod" | head -n 1); then
+            lang="go"; build_dir=$(dirname "$path")
+            echo "✅ Go Dir: $build_dir"
+          elif path=$(find . -type f -name "Cargo.toml" | head -n 1); then
+            lang="rust"; build_dir=$(dirname "$path")
+            echo "✅ Rust Dir: $build_dir"
+          elif path=$(find . -type f -name "Makefile" | head -n 1) || path=$(find . -type f -name "CMakeLists.txt" | head -n 1); then
+            lang="cpp"; build_dir=$(dirname "$path")
+            echo "✅ C++ Dir: $build_dir"
+          elif path=$(find . -type f -name "AndroidManifest.xml" | head -n 1); then
+            lang="android"; build_dir=$(dirname "$path")
+            echo "✅ Android Dir: $build_dir"
+          elif path=$(find . -type f -name "pubspec.yaml" | head -n 1); then
+            if grep -q "sdk: \">=2.12.0" "$path"; then
+              lang="flutter_modern"
+            else
+              lang="flutter_legacy"
+            fi
+            build_dir=$(dirname "$path")
+            echo "✅ Flutter Dir: $build_dir"
+          elif find . -name "Podfile" | grep -q . || [ -d "ios" ]; then
+            lang="ios"; build_dir="."
+            echo "✅ iOS Dir: $build_dir"
           else
-            lang="fallback"
+            lang="fallback"; build_dir="."
+            echo "⚠️ Fallback Dir: $build_dir"
           fi
 
           echo "language=$lang" >> $GITHUB_OUTPUT
-          echo "➡️ Linguagem detectada: $lang"
+          echo "build_dir=$build_dir" >> $GITHUB_OUTPUT
 
-  # -------------------------------
-  # 🔹 Job 3: Build - Linux stacks
-  # -------------------------------
+  # -----------------------------
+  # 🔹 Build Linux
+  # -----------------------------
   build_linux:
     name: Build - Linux Stacks
     runs-on: ubuntu-latest
@@ -86,77 +113,105 @@ jobs:
     if: |
       needs.detect_stack.outputs.language != 'dotnet_framework' &&
       needs.detect_stack.outputs.language != 'ios'
-
     outputs:
       artifact_path: ${{ steps.set_output.outputs.artifact_path }}
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Java
+        if: |
+          needs.detect_stack.outputs.language == 'maven' ||
+          needs.detect_stack.outputs.language == 'gradle' ||
+          needs.detect_stack.outputs.language == 'kotlin'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Node
+        if: needs.detect_stack.outputs.language == 'node'
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
 
+      - name: Setup Python
+        if: needs.detect_stack.outputs.language == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Setup Flutter (Modern)
+        if: needs.detect_stack.outputs.language == 'flutter_modern'
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+
+      - name: Setup Flutter (Legacy)
+        if: needs.detect_stack.outputs.language == 'flutter_legacy'
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '2.10.5'
+
       - id: build
+        name: Build Project
         run: |
-          echo "🔨 Buildando Linux..."
-          mkdir -p output
           lang="${{ needs.detect_stack.outputs.language }}"
+          build_dir="${{ needs.detect_stack.outputs.build_dir }}"
+
+          echo "✅ Building: $lang"
+          echo "➡️ Dir: $build_dir"
+
+          mkdir -p $GITHUB_WORKSPACE/output
+          cd "$build_dir"
 
           if [ "$lang" = "maven" ]; then
-            mvn clean package
-            cp -r target/* output/
-          elif [ "$lang" = "gradle" ]; then
-            gradle build
-            cp -r build/libs/* output/
+            mvn clean package && cp -r target/* $GITHUB_WORKSPACE/output/
+          elif [ "$lang" = "gradle" ] || [ "$lang" = "kotlin" ]; then
+            gradle build || ./gradlew build
+            cp -r build/libs/* $GITHUB_WORKSPACE/output/
           elif [ "$lang" = "ant" ]; then
             ant debug || ant release || ant build
-            cp -r build/* output/
+            cp -r build/* $GITHUB_WORKSPACE/output/
           elif [ "$lang" = "dotnet_core" ]; then
-            dotnet restore
-            dotnet build --configuration Release
-            cp -r bin/* output/
+            dotnet restore && dotnet build --configuration Release
+            cp -r bin/* $GITHUB_WORKSPACE/output/
           elif [ "$lang" = "node" ]; then
-            npm install
-            npm run build || echo "Nenhum build script"
-            rsync -av --progress ./ ./output --exclude output --exclude node_modules
+            npm install && npm run build || true
+            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude node_modules --exclude .git
           elif [ "$lang" = "python" ]; then
+            sudo apt-get update && sudo apt-get install -y libjpeg-dev zlib1g-dev libpng-dev
             pip install .
-            cp -r * output/
+            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude .git
           elif [ "$lang" = "php" ]; then
             composer install || true
-            cp -r * output/
+            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude vendor --exclude .git
           elif [ "$lang" = "ruby" ]; then
             bundle install || true
-            cp -r * output/
+            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude .git
           elif [ "$lang" = "go" ]; then
-            go build -o app
-            cp app output/
+            sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev pkg-config
+            go mod tidy && go build -o app
+            cp app $GITHUB_WORKSPACE/output/
           elif [ "$lang" = "rust" ]; then
-            cargo build --release
-            cp -r target/release/* output/
+            cargo build --release && cp target/release/* $GITHUB_WORKSPACE/output/
           elif [ "$lang" = "cpp" ]; then
-            if [ -f "Makefile" ]; then
-              make
-            else
-              mkdir build && cd build && cmake .. && make
-              cd ..
-            fi
-            cp -r * output/
+            make || cmake . && make
+            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude .git
           elif [ "$lang" = "android" ]; then
-            ./gradlew assembleDebug
-            cp app/build/outputs/apk/debug/*.apk output/
+            ./gradlew assembleDebug && cp app/build/outputs/apk/debug/*.apk $GITHUB_WORKSPACE/output/
+          elif [[ "$lang" == flutter* ]]; then
+            flutter pub get && flutter build apk --debug --split-debug-info=output/
+            cp -r build/app/outputs/flutter-apk/*.apk $GITHUB_WORKSPACE/output/
           elif [ "$lang" = "fallback" ]; then
-            echo "⚠️ Fallback → copiando tudo"
-            rsync -av --progress ./ ./output --exclude output
+            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude .git
           fi
 
       - id: set_output
         run: echo "artifact_path=output" >> $GITHUB_OUTPUT
 
       - name: Package Artifact
-        run: zip -r veracode.zip output
+        run: cd $GITHUB_WORKSPACE && zip -r veracode.zip output
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -164,117 +219,66 @@ jobs:
           name: veracode-package
           path: veracode.zip
 
-  # -------------------------------
-  # 🔹 Job 4: Build - Windows (.NET Framework)
-  # -------------------------------
+  # -----------------------------
+  # 🔹 Build Windows (.NET Framework)
+  # -----------------------------
   build_windows:
     name: Build - Windows (.NET Framework)
     runs-on: windows-latest
     needs: detect_stack
     if: needs.detect_stack.outputs.language == 'dotnet_framework'
-
-    outputs:
-      artifact_path: ${{ steps.set_output.outputs.artifact_path }}
-
     steps:
-      - uses: actions/checkout@v4
-
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Build .NET Framework
-        shell: pwsh
         run: |
-          $msbuildPath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" `
-            -latest `
-            -products * `
-            -requires Microsoft.Component.MSBuild `
-            -find MSBuild\**\Bin\MSBuild.exe
-
-          Write-Host "MSBuild Path: $msbuildPath"
-
-          $solution = Get-ChildItem -Recurse -Filter *.sln | Select-Object -First 1
-
-          if ($null -eq $solution) {
-            $csproj = Get-ChildItem -Recurse -Filter *.csproj | Select-Object -First 1
-            if ($null -eq $csproj) {
-              Write-Error "❌ Nenhum arquivo .sln ou .csproj encontrado!"
-              exit 1
-            }
-            & "$msbuildPath" $csproj.FullName /p:Configuration=Release
-          } else {
-            & "$msbuildPath" $solution.FullName /p:Configuration=Release
-          }
-
+          msbuild *.sln /p:Configuration=Release
           mkdir output
-
-          $binFolders = Get-ChildItem -Recurse -Directory -Filter bin
-          if ($binFolders) {
-            foreach ($folder in $binFolders) {
-              Copy-Item -Path "$($folder.FullName)\*" -Destination .\output -Recurse
-            }
-          } else {
-            Write-Host "⚠️ Nenhum diretório bin encontrado."
-          }
-
-      - id: set_output
-        run: echo "artifact_path=output" >> $Env:GITHUB_OUTPUT
-
+          Copy-Item -Path .\bin\* -Destination .\output -Recurse
       - name: Package Artifact
         run: Compress-Archive -Path output -DestinationPath veracode.zip
-
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: veracode-package
           path: veracode.zip
 
-  # -------------------------------
-  # 🔹 Job 5: Build Mac (iOS/Swift)
-  # -------------------------------
+  # -----------------------------
+  # 🔹 Build macOS (iOS/Swift)
+  # -----------------------------
   build_mac:
     name: Build - macOS (iOS/Swift)
     runs-on: macos-latest
     needs: detect_stack
     if: needs.detect_stack.outputs.language == 'ios'
-
-    outputs:
-      artifact_path: ${{ steps.set_output.outputs.artifact_path }}
-
     steps:
-      - uses: actions/checkout@v4
-
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Build iOS/Swift
         run: |
-          echo "⚠️ Compile seu Xcode build aqui!"
-          mkdir output && cp -r * output/
-
-      - id: set_output
-        run: echo "artifact_path=output" >> $GITHUB_OUTPUT
-
+          mkdir -p output
+          rsync -av ./ ./output --exclude output --exclude .git
       - name: Package Artifact
         run: zip -r veracode.zip output
-
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: veracode-package
           path: veracode.zip
 
-  # -------------------------------
-  # 🔹 Job 6: Pipeline Scan
-  # -------------------------------
+  # -----------------------------
+  # 🔹 Veracode Pipeline Scan
+  # -----------------------------
   pipeline_scan:
     name: Veracode Pipeline Scan
     runs-on: ubuntu-latest
     needs: [build_linux, build_windows, build_mac]
-    if: |
-      always() &&
-      (needs.build_linux.result == 'success' || needs.build_windows.result == 'success' || needs.build_mac.result == 'success')
-
+    if: always() && (needs.build_linux.result == 'success' || needs.build_windows.result == 'success' || needs.build_mac.result == 'success')
     steps:
       - name: Download Artifact
         uses: actions/download-artifact@v4
         with:
           name: veracode-package
-
       - name: Run Pipeline Scan
         run: |
           curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
@@ -285,24 +289,20 @@ jobs:
             -f veracode.zip \
             -jf results.json
 
-  # -------------------------------
-  # 🔹 Job 7: SAST
-  # -------------------------------
+  # -----------------------------
+  # 🔹 Veracode Upload & Scan
+  # -----------------------------
   sast:
-    name: Veracode Upload and Scan (SAST)
+    name: Veracode Upload & Scan
     runs-on: ubuntu-latest
     needs: [build_linux, build_windows, build_mac]
-    if: |
-      always() &&
-      (needs.build_linux.result == 'success' || needs.build_windows.result == 'success' || needs.build_mac.result == 'success')
-
+    if: always() && (needs.build_linux.result == 'success' || needs.build_windows.result == 'success' || needs.build_mac.result == 'success')
     steps:
       - name: Download Artifact
         uses: actions/download-artifact@v4
         with:
           name: veracode-package
-
-      - name: Upload and Scan
+      - name: Veracode Upload & Scan
         uses: veracode/veracode-uploadandscan-action@master
         with:
           vid: ${{ secrets.VID }}
@@ -311,4 +311,3 @@ jobs:
           createprofile: true
           filepath: 'veracode.zip'
           version: ${{ github.run_id }}
-          deleteIncompleteScan: false
