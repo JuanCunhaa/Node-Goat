@@ -212,7 +212,7 @@ jobs:
           path: veracode-ios.zip
 
   # 🔹 Pipeline Scan
-  pipeline_scan:
+    pipeline_scan:
     name: Veracode Pipeline Scan
     runs-on: ubuntu-latest
     needs: [build_auto, build_manual, build_manual_mac]
@@ -221,17 +221,22 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: veracode-package
-      - run: |
+          path: ${{ github.workspace }}
+
+      - name: Find Zip
+        id: find_zip
+        run: |
           found=$(find . -name '*.zip' | head -n1)
           echo "ZIP: $found"
+          echo "zipfile=$found" >> $GITHUB_OUTPUT
+
       - uses: veracode/Veracode-pipeline-scan-action@v1.0.18
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
-          file: "*.zip"
+          file: "${{ steps.find_zip.outputs.zipfile }}"
           fail_build: true
 
-  # 🔹 Upload & Scan
   sast:
     name: Veracode Upload & Scan
     runs-on: ubuntu-latest
@@ -241,14 +246,20 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: veracode-package
-      - run: |
+          path: ${{ github.workspace }}
+
+      - name: Find Zip
+        id: find_zip
+        run: |
           found=$(find . -name '*.zip' | head -n1)
           echo "ZIP: $found"
+          echo "zipfile=$found" >> $GITHUB_OUTPUT
+
       - uses: veracode/veracode-uploadandscan-action@0.2.8
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
           appname: "Github - ${{ github.repository }}"
           createprofile: true
-          filepath: "*.zip"
+          filepath: "${{ steps.find_zip.outputs.zipfile }}"
           version: ${{ github.run_id }}
