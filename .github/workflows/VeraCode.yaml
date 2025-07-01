@@ -1,4 +1,4 @@
-name: Veracode Ultra Workflow (Granular + Auto-Packager Fix)
+name: Veracode Ultra Workflow (Granular + Basename Fix)
 
 on:
   push:
@@ -169,98 +169,20 @@ jobs:
       - name: Find Auto-Packager ZIP
         id: find_zip
         run: |
-          echo "zipfile=$(find ${{ github.workspace }}/veracode-out -name '*.zip' | head -n1)" >> $GITHUB_OUTPUT
+          found=$(find ${{ github.workspace }}/veracode-out -name '*.zip' | head -n1)
+          echo "zipfile=$(basename $found)" >> $GITHUB_OUTPUT
 
       - name: Upload Auto-Packager Artifact
         uses: actions/upload-artifact@v4
         with:
           name: veracode-package
-          path: ${{ steps.find_zip.outputs.zipfile }}
-
-  # 🔹 Manual Linux (Fallback)
-  build_manual:
-    name: Build Manual (Linux Fallback)
-    runs-on: ubuntu-latest
-    needs: detect_stack
-    if: |
-      needs.detect_stack.outputs.language == 'cpp' ||
-      needs.detect_stack.outputs.language == 'ant' ||
-      needs.detect_stack.outputs.language == 'php' ||
-      needs.detect_stack.outputs.language == 'ruby' ||
-      needs.detect_stack.outputs.language == 'flutter'
-    defaults:
-      run:
-        working-directory: ${{ needs.detect_stack.outputs.build_path }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
-
-      - name: Setup Flutter
-        if: needs.detect_stack.outputs.language == 'flutter'
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.x'
-
-      - name: Manual Build
-        run: |
-          mkdir -p output
-          lang="${{ needs.detect_stack.outputs.language }}"
-          echo "➡️ Manual Building: $lang"
-
-          if [ "$lang" = "cpp" ]; then
-            make || cmake . && make && cp -r ./ output/
-          elif [ "$lang" = "ant" ]; then
-            ant debug || ant release || ant build && cp -r build/* output/
-          elif [ "$lang" = "php" ]; then
-            composer install || true && rsync -av ./ ./output --exclude output --exclude vendor --exclude .git
-          elif [ "$lang" = "ruby" ]; then
-            bundle install || true && rsync -av ./ ./output --exclude output --exclude .git
-          elif [ "$lang" = "flutter" ]; then
-            flutter pub get
-            flutter build apk --debug
-            cp build/app/outputs/flutter-apk/*.apk output/
-          fi
-
-      - name: Package Manual Output
-        run: zip -r ${{ github.workspace }}/veracode.zip output
-
-      - name: Upload Manual Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: veracode-package
-          path: ${{ github.workspace }}/veracode.zip
-
-  # 🔹 Manual macOS (iOS Fallback)
-  build_manual_mac:
-    name: Build Manual (iOS Fallback)
-    runs-on: macos-latest
-    needs: detect_stack
-    if: needs.detect_stack.outputs.language == 'ios'
-    defaults:
-      run:
-        working-directory: ${{ needs.detect_stack.outputs.build_path }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
-
-      - run: |
-          mkdir -p output
-          rsync -av ./ ./output --exclude output --exclude .git
-
-      - name: Package iOS Output
-        run: zip -r ${{ github.workspace }}/veracode.zip
-
-      - name: Upload iOS Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: veracode-package
-          path: ${{ github.workspace }}/veracode.zip
+          path: ${{ github.workspace }}/veracode-out/${{ steps.find_zip.outputs.zipfile }}
 
   # 🔹 Pipeline Scan
   pipeline_scan:
     name: Veracode Pipeline Scan
     runs-on: ubuntu-latest
-    needs: [build_auto, build_manual, build_manual_mac]
+    needs: [build_auto]
     if: always()
     steps:
       - name: Download Artifact
@@ -274,14 +196,14 @@ jobs:
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
-          file: "${{ needs.build_auto.outputs.zipfile }}"
+          file: "${{ github.workspace }}/${{ needs.build_auto.outputs.zipfile }}"
           fail_build: true
 
   # 🔹 Veracode Upload & Scan
   sast:
     name: Veracode Upload & Scan
     runs-on: ubuntu-latest
-    needs: [build_auto, build_manual, build_manual_mac]
+    needs: [build_auto]
     if: always()
     steps:
       - name: Download Artifact
@@ -297,5 +219,5 @@ jobs:
           vkey: ${{ secrets.VKEY }}
           appname: 'Github - ${{ github.repository }}'
           createprofile: true
-          filepath: "${{ needs.build_auto.outputs.zipfile }}"
+          filepath: "${{ github.workspace }}/${{ needs.build_auto.outputs.zipfile }}"
           version: ${{ github.run_id }}
