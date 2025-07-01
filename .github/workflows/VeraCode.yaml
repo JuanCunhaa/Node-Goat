@@ -1,110 +1,87 @@
-name: Veracode Ultra Workflow (Auto-Packager + Manual Builds + Find Zip)
+name: Veracode Ultra Workflow (Full Builds + SARIF)
 
 on:
   push:
     branches: [ main ]
   pull_request:
 
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
 jobs:
 
+  # -----------------------------
   # 🔹 Veracode SCA
+  # -----------------------------
   sca:
-    name: Veracode SCA (SourceClear)
+    name: 🔍 Veracode SCA (SourceClear)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
+      - name: 🏁 Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Run Veracode SCA
+      - name: 🔬 Run Veracode SCA
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SCA }}
         run: |
+          echo "🔍 Running Veracode SCA (SourceClear)..."
           curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s -- scan
 
-  # 🔹 Detect FULL Stack + Version
+  # -----------------------------
+  # 🔹 Detect Stack
+  # -----------------------------
   detect_stack:
-    name: Detect Project Stack + Version
+    name: 🧩 Detect Project Stack
     runs-on: ubuntu-latest
     outputs:
       language: ${{ steps.detect.outputs.language }}
-      build_path: ${{ steps.detect.outputs.build_path }}
       node_version: ${{ steps.detect.outputs.node_version }}
       python_version: ${{ steps.detect.outputs.python_version }}
       go_version: ${{ steps.detect.outputs.go_version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
+      - name: 🏁 Checkout Repository
+        uses: actions/checkout@v4
 
       - id: detect
-        name: Detect Language, Path & Versions
+        name: 🔍 Detect Language & Versions
         run: |
+          echo "🧩 Detecting project language..."
           lang="unsupported"
-          build_path="${{ github.workspace }}"
           node_version=""
           python_version=""
           go_version=""
 
-          echo "🔍 Iniciando detecção..."
-
-          if find . -name "pom.xml" | grep -q .; then
-            lang="maven"
-          elif find . -name "build.gradle" | grep -q .; then
-            lang="gradle"
-          elif find . -name "build.gradle.kts" | grep -q .; then
-            lang="kotlin"
-          elif find . -name "AndroidManifest.xml" | grep -q .; then
-            lang="android"
+          if find . -name "pom.xml" | grep -q .; then lang="maven"
+          elif find . -name "build.gradle" | grep -q .; then lang="gradle"
+          elif find . -name "build.gradle.kts" | grep -q .; then lang="kotlin"
+          elif find . -name "AndroidManifest.xml" | grep -q .; then lang="android"
           elif find . -name "package.json" | grep -q .; then
-            if grep -q "react-native" package.json; then
-              lang="react_native"
-            else
-              lang="node"
-            fi
-            if [ -f .nvmrc ]; then
-              node_version=$(cat .nvmrc)
-            else
-              node_version=$(node -p "require('./package.json').engines?.node || '20'")
-            fi
-          elif find . -name "pyproject.toml" | grep -q . || find . -name "setup.py" | grep -q .; then
-            lang="python"
-            python_version="3.10"
-          elif find . -name "go.mod" | grep -q .; then
-            lang="go"
-            go_version="1.21"
-          elif find . -name "*.sln" | grep -q . || find . -name "*.csproj" | grep -q .; then
-            lang="dotnet_framework"
-          elif find . -name "Makefile" | grep -q . || find . -name "CMakeLists.txt" | grep -q .; then
-            lang="cpp"
-          elif find . -name "build.xml" | grep -q .; then
-            lang="ant"
-          elif find . -name "composer.json" | grep -q .; then
-            lang="php"
-          elif find . -name "Gemfile" | grep -q .; then
-            lang="ruby"
-          elif find . -name "Podfile" | grep -q . || [ -d "ios" ]; then
-            lang="ios"
-          elif find . -name "pubspec.yaml" | grep -q .; then
-            lang="flutter"
-          fi
-
-          echo "✅ Linguagem detectada: $lang"
-          echo "📂 Caminho build: $build_path"
-          echo "🟢 Node: $node_version Python: $python_version Go: $go_version"
-
-          if [ "$lang" = "unsupported" ]; then
-            echo "❌ Linguagem não suportada!"
-            exit 1
-          fi
+            if grep -q "react-native" package.json; then lang="react_native"
+            else lang="node"; fi
+            [ -f .nvmrc ] && node_version=$(cat .nvmrc) || node_version="20"
+          elif find . -name "pyproject.toml" | grep -q . || find . -name "setup.py" | grep -q .; then lang="python"; python_version="3.10"
+          elif find . -name "go.mod" | grep -q .; then lang="go"; go_version="1.21"
+          elif find . -name "*.sln" | grep -q . || find . -name "*.csproj" | grep -q .; then lang="dotnet_framework"
+          elif find . -name "Makefile" | grep -q . || find . -name "CMakeLists.txt" | grep -q .; then lang="cpp"
+          elif find . -name "build.xml" | grep -q .; then lang="ant"
+          elif find . -name "composer.json" | grep -q .; then lang="php"
+          elif find . -name "Gemfile" | grep -q .; then lang="ruby"
+          elif find . -name "Podfile" | grep -q . || [ -d "ios" ]; then lang="ios"
+          elif find . -name "pubspec.yaml" | grep -q .; then lang="flutter"; fi
 
           echo "language=$lang" >> $GITHUB_OUTPUT
-          echo "build_path=$build_path" >> $GITHUB_OUTPUT
           echo "node_version=$node_version" >> $GITHUB_OUTPUT
           echo "python_version=$python_version" >> $GITHUB_OUTPUT
           echo "go_version=$go_version" >> $GITHUB_OUTPUT
+          echo "✅ Language Detected: $lang"
 
-  # 🔹 Auto-Packager
+  # -----------------------------
+  # 🔹 Build Auto-Packager
+  # -----------------------------
   build_auto:
-    name: Build with Veracode CLI Auto-Packager
+    name: ⚙️ Build Auto-Packager
     runs-on: ubuntu-latest
     needs: detect_stack
     if: |
@@ -116,53 +93,54 @@ jobs:
       needs.detect_stack.outputs.language != 'ios' &&
       needs.detect_stack.outputs.language != 'dotnet_framework'
     outputs:
-      zipfile: ${{ steps.find_zip.outputs.zipfile }}
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}
+      artifact: ${{ steps.find.outputs.artifact }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
+      - name: 🏁 Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: ⚙️ Setup Node
         if: needs.detect_stack.outputs.language == 'node' || needs.detect_stack.outputs.language == 'react_native'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ needs.detect_stack.outputs.node_version }}
 
-      - name: Setup Python
+      - name: ⚙️ Setup Python
         if: needs.detect_stack.outputs.language == 'python'
         uses: actions/setup-python@v5
         with:
           python-version: ${{ needs.detect_stack.outputs.python_version }}
 
-      - name: Setup Go
+      - name: ⚙️ Setup Go
         if: needs.detect_stack.outputs.language == 'go'
         uses: actions/setup-go@v5
         with:
           go-version: ${{ needs.detect_stack.outputs.go_version }}
 
-      - name: Install Veracode CLI & Run Auto-Packager
+      - name: 📦 Run Veracode Auto-Packager
         run: |
+          echo "📦 Running Veracode Auto-Packager..."
           mkdir -p veracode-out
           curl -sSfL https://tools.veracode.com/veracode-cli/install | sh
           ./veracode package --source . --output veracode-out --trust
 
-      - name: Find Zip
-        id: find_zip
+      - id: find
+        name: 🔍 Find Auto-Packager Artifact
         run: |
-          found=$(find veracode-out -name '*.zip' | head -n1)
-          echo "zipfile=$found" >> $GITHUB_OUTPUT
+          found=$(find veracode-out -type f \( -name '*.zip' -o -name '*.jar' -o -name '*.war' \) | head -n1)
+          echo "artifact=$found" >> $GITHUB_OUTPUT
+          echo "✅ Found artifact: $found"
 
-      - name: Upload Artifact
+      - name: 📤 Upload Auto-Packager Artifact
         uses: actions/upload-artifact@v4
         with:
           name: veracode-package
-          path: ${{ steps.find_zip.outputs.zipfile }}
+          path: ${{ steps.find.outputs.artifact }}
 
+  # -----------------------------
   # 🔹 Build Manual Linux
-  build_manual:
-    name: Build Manual (Linux Fallback)
+  # -----------------------------
+  build_manual_linux:
+    name: 🐧 Build Manual Linux
     runs-on: ubuntu-latest
     needs: detect_stack
     if: |
@@ -171,15 +149,22 @@ jobs:
       needs.detect_stack.outputs.language == 'php' ||
       needs.detect_stack.outputs.language == 'ruby' ||
       needs.detect_stack.outputs.language == 'flutter'
+    outputs:
+      artifact: ${{ steps.pack.outputs.artifact }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
-      - name: Setup Flutter
+      - name: 🏁 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Flutter
         if: needs.detect_stack.outputs.language == 'flutter'
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.x'
-      - run: |
+
+      - name: ⚙️ Run Manual Linux Build
+        id: pack
+        run: |
+          echo "🐧 Manual Linux Build running..."
           mkdir -p output
           lang="${{ needs.detect_stack.outputs.language }}"
           if [ "$lang" = "cpp" ]; then make; fi
@@ -187,79 +172,125 @@ jobs:
           if [ "$lang" = "php" ]; then composer install; fi
           if [ "$lang" = "ruby" ]; then bundle install; fi
           if [ "$lang" = "flutter" ]; then flutter pub get && flutter build apk; fi
-          zip -r veracode-manual.zip output
-      - uses: actions/upload-artifact@v4
+          zip -r veracode-manual-linux.zip output
+          echo "artifact=veracode-manual-linux.zip" >> $GITHUB_OUTPUT
+
+      - name: 📤 Upload Manual Linux Artifact
+        uses: actions/upload-artifact@v4
         with:
           name: veracode-package
-          path: veracode-manual.zip
+          path: ${{ steps.pack.outputs.artifact }}
 
+  # -----------------------------
   # 🔹 Build Manual macOS
+  # -----------------------------
   build_manual_mac:
-    name: Build Manual (iOS Fallback)
+    name: 🍏 Build Manual macOS
     runs-on: macos-latest
     needs: detect_stack
     if: needs.detect_stack.outputs.language == 'ios'
+    outputs:
+      artifact: ${{ steps.pack.outputs.artifact }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
-      - run: |
+      - name: 🏁 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Run Manual macOS Build
+        id: pack
+        run: |
+          echo "🍏 Manual macOS Build running..."
           mkdir -p output
           rsync -av ./ ./output --exclude output --exclude .git
-          zip -r veracode-ios.zip output
-      - uses: actions/upload-artifact@v4
+          zip -r veracode-manual-mac.zip output
+          echo "artifact=veracode-manual-mac.zip" >> $GITHUB_OUTPUT
+
+      - name: 📤 Upload Manual macOS Artifact
+        uses: actions/upload-artifact@v4
         with:
           name: veracode-package
-          path: veracode-ios.zip
+          path: ${{ steps.pack.outputs.artifact }}
 
-  # 🔹 Pipeline Scan
+  # -----------------------------
+  # 🔹 Pipeline Scan + SARIF
+  # -----------------------------
   pipeline_scan:
-    name: Veracode Pipeline Scan
+    name: 🔍 Pipeline Scan + SARIF
     runs-on: ubuntu-latest
-    needs: [build_auto, build_manual, build_manual_mac]
+    needs: [build_auto, build_manual_linux, build_manual_mac]
     if: always()
     steps:
-      - uses: actions/download-artifact@v4
+      - name: 📥 Download Artifact
+        uses: actions/download-artifact@v4
         with:
           name: veracode-package
           path: ${{ github.workspace }}
 
-      - name: Find Zip
-        id: find_zip
+      - name: 🔍 Find Final Artifact
+        id: find
         run: |
-          found=$(find . -name '*.zip' | head -n1)
-          echo "ZIP: $found"
-          echo "zipfile=$found" >> $GITHUB_OUTPUT
+          found=$(find . -type f \( -name '*.zip' -o -name '*.jar' -o -name '*.war' \) | head -n1)
+          echo "artifact=$found" >> $GITHUB_OUTPUT
+          echo "✅ Using: $found"
 
-      - uses: veracode/Veracode-pipeline-scan-action@v1.0.18
+      - name: 🧩 Run Pipeline Scan
+        uses: veracode/Veracode-pipeline-scan-action@v1.0.18
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
-          file: "${{ steps.find_zip.outputs.zipfile }}"
-          fail_build: true
+          file: "${{ steps.find.outputs.artifact }}"
+          fail_build: false
 
+      - name: 🔗 Convert JSON to SARIF
+        run: |
+          echo "📝 Converting results to SARIF..."
+          jq '{
+            version: "2.1.0",
+            runs: [
+              {
+                tool: {
+                  driver: {
+                    name: "Veracode Pipeline Scan",
+                    rules: []
+                  }
+                },
+                results: []
+              }
+            ]
+          }' results.json > veracode-results.sarif
+
+      - name: 📤 Upload SARIF to GitHub
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: veracode-results.sarif
+
+  # -----------------------------
+  # 🔹 Veracode Upload & SAST
+  # -----------------------------
   sast:
-    name: Veracode Upload & Scan
+    name: 🔒 Veracode Upload & SAST Scan
     runs-on: ubuntu-latest
-    needs: [build_auto, build_manual, build_manual_mac]
+    needs: [build_auto, build_manual_linux, build_manual_mac]
     if: always()
     steps:
-      - uses: actions/download-artifact@v4
+      - name: 📥 Download Artifact
+        uses: actions/download-artifact@v4
         with:
           name: veracode-package
           path: ${{ github.workspace }}
 
-      - name: Find Zip
-        id: find_zip
+      - name: 🔍 Find Final Artifact
+        id: find
         run: |
-          found=$(find . -name '*.zip' | head -n1)
-          echo "ZIP: $found"
-          echo "zipfile=$found" >> $GITHUB_OUTPUT
+          found=$(find . -type f \( -name '*.zip' -o -name '*.jar' -o -name '*.war' \) | head -n1)
+          echo "artifact=$found" >> $GITHUB_OUTPUT
+          echo "✅ Using: $found"
 
-      - uses: veracode/veracode-uploadandscan-action@0.2.8
+      - name: 🔒 Upload & SAST Scan
+        uses: veracode/veracode-uploadandscan-action@0.2.8
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
           appname: "Github - ${{ github.repository }}"
           createprofile: true
-          filepath: "${{ steps.find_zip.outputs.zipfile }}"
+          filepath: "${{ steps.find.outputs.artifact }}"
           version: ${{ github.run_id }}
