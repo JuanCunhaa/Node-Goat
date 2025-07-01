@@ -1,4 +1,4 @@
-name: Veracode Ultra Workflow (Full Auto-Packager + Version Detect + Fallback)
+name: Veracode Ultra Workflow (Auto-Packager + Version Detect + Fallback + Tags)
 
 on:
   push:
@@ -7,25 +7,20 @@ on:
 
 jobs:
 
-  # -----------------------------
   # 🔹 Veracode SCA
-  # -----------------------------
   sca:
     name: Veracode SCA (SourceClear)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.2
-
       - name: Run Veracode SCA
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SCA }}
         run: |
           curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s -- scan
 
-  # -----------------------------
   # 🔹 Detect FULL Stack + Version
-  # -----------------------------
   detect_stack:
     name: Detect Project Stack + Version
     runs-on: ubuntu-latest
@@ -38,15 +33,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.2
-
       - id: detect
         name: Detect Language, Path & Versions
         run: |
           lang="unsupported"
           build_path="."
-          node_version="20"
-          python_version="3.10"
-          go_version="1.21"
+          node_version=""
+          python_version=""
+          go_version=""
 
           echo "🔍 Iniciando detecção..."
 
@@ -107,9 +101,9 @@ jobs:
 
           echo "✅ Linguagem detectada: $lang"
           echo "📂 Caminho build: $build_path"
-          echo "🟢 Node version: $node_version"
-          echo "🟢 Python version: $python_version"
-          echo "🟢 Go version: $go_version"
+          [ -n "$node_version" ] && echo "🟢 Node version: $node_version"
+          [ -n "$python_version" ] && echo "🟢 Python version: $python_version"
+          [ -n "$go_version" ] && echo "🟢 Go version: $go_version"
 
           if [ "$lang" = "unsupported" ]; then
             echo "❌ Linguagem não suportada!"
@@ -122,9 +116,7 @@ jobs:
           echo "python_version=$python_version" >> $GITHUB_OUTPUT
           echo "go_version=$go_version" >> $GITHUB_OUTPUT
 
-  # -----------------------------
   # 🔹 Build Auto-Packager (CLI)
-  # -----------------------------
   build_auto:
     name: Build with Veracode CLI Auto-Packager
     runs-on: ubuntu-latest
@@ -141,7 +133,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.2
-
       - name: Setup Node
         if: |
           needs.detect_stack.outputs.language == 'node' ||
@@ -149,33 +140,27 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ needs.detect_stack.outputs.node_version }}
-
       - name: Setup Python
         if: needs.detect_stack.outputs.language == 'python'
         uses: actions/setup-python@v5
         with:
           python-version: ${{ needs.detect_stack.outputs.python_version }}
-
       - name: Setup Go
         if: needs.detect_stack.outputs.language == 'go'
         uses: actions/setup-go@v5
         with:
           go-version: ${{ needs.detect_stack.outputs.go_version }}
-
       - name: Install Veracode CLI & Run Auto-Packager
         run: |
           curl -sSfL https://tools.veracode.com/veracode-cli/install | sh
-          ./veracode package --source . --output veracode_out.zip --trust
-
+          ./veracode package --source . --output veracode.zip --trust
       - name: Upload Auto-Packager Artifact
         uses: actions/upload-artifact@v4
         with:
           name: veracode-package
-          path: veracode_out.zip
+          path: veracode.zip
 
-  # -----------------------------
   # 🔹 Build Manual Linux (Fallback)
-  # -----------------------------
   build_manual:
     name: Build Manual (Linux Fallback)
     runs-on: ubuntu-latest
@@ -192,13 +177,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.2
-
       - name: Setup Flutter
         if: needs.detect_stack.outputs.language == 'flutter'
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.x'
-
       - name: Manual Build
         run: |
           mkdir -p output
@@ -218,19 +201,15 @@ jobs:
             flutter build apk --debug
             cp build/app/outputs/flutter-apk/*.apk output/
           fi
-
       - name: Package Manual Output
         run: zip -r veracode.zip output
-
       - name: Upload Manual Artifact
         uses: actions/upload-artifact@v4
         with:
           name: veracode-package
           path: veracode.zip
 
-  # -----------------------------
   # 🔹 Build Manual macOS (iOS Fallback)
-  # -----------------------------
   build_manual_mac:
     name: Build Manual (iOS Fallback)
     runs-on: macos-latest
@@ -242,47 +221,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.2
-
       - run: |
           mkdir -p output
           rsync -av ./ ./output --exclude output --exclude .git
-
       - name: Package iOS Output
         run: zip -r veracode.zip output
-
       - name: Upload iOS Artifact
         uses: actions/upload-artifact@v4
         with:
           name: veracode-package
           path: veracode.zip
 
-  # -----------------------------
   # 🔹 Veracode Pipeline Scan
-  # -----------------------------
   pipeline_scan:
     name: Veracode Pipeline Scan
     runs-on: ubuntu-latest
     needs: [build_auto, build_manual, build_manual_mac]
     if: always()
-    continue-on-error: true
     steps:
       - name: Download Artifact
         uses: actions/download-artifact@v4
         with:
           name: veracode-package
-
       - name: Run Veracode Pipeline Scan
-        uses: veracode/Veracode-pipeline-scan-action@main
+        uses: veracode/Veracode-pipeline-scan-action@v1.0.18
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
-          filepath: '**/*.zip'
+          file: 'veracode.zip'
           fail_build: true
-          issue_details: true
 
-  # -----------------------------
   # 🔹 Veracode Upload & Scan
-  # -----------------------------
   sast:
     name: Veracode Upload & Scan
     runs-on: ubuntu-latest
@@ -293,13 +262,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: veracode-package
-
       - name: Veracode Upload & Scan
-        uses: veracode/veracode-uploadandscan-action@master
+        uses: veracode/veracode-uploadandscan-action@0.2.8
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
           appname: 'Github - ${{ github.repository }}'
           createprofile: true
-          filepath: '**/*.zip'
+          filepath: 'veracode.zip'
           version: ${{ github.run_id }}
