@@ -1,4 +1,4 @@
-name: Veracode Ultra Workflow (Granular Workspace + Auto-Packager Fix)
+name: Veracode Ultra Workflow (Granular + Auto-Packager Fix)
 
 on:
   push:
@@ -135,6 +135,8 @@ jobs:
     defaults:
       run:
         working-directory: ${{ needs.detect_stack.outputs.build_path }}
+    outputs:
+      zipfile: ${{ steps.find_zip.outputs.zipfile }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.2
@@ -246,7 +248,7 @@ jobs:
           rsync -av ./ ./output --exclude output --exclude .git
 
       - name: Package iOS Output
-        run: zip -r ${{ github.workspace }}/veracode.zip output
+        run: zip -r ${{ github.workspace }}/veracode.zip
 
       - name: Upload iOS Artifact
         uses: actions/upload-artifact@v4
@@ -267,20 +269,15 @@ jobs:
           name: veracode-package
           path: ${{ github.workspace }}
 
-      - name: Check Files
-        run: |
-          echo "PWD: $(pwd)"
-          ls -la ${{ github.workspace }}
-
       - name: Run Veracode Pipeline Scan
         uses: veracode/Veracode-pipeline-scan-action@v1.0.18
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
-          file: "${{ github.workspace }}/veracode.zip"
+          file: "${{ needs.build_auto.outputs.zipfile }}"
           fail_build: true
 
-  # 🔹 Upload & Scan
+  # 🔹 Veracode Upload & Scan
   sast:
     name: Veracode Upload & Scan
     runs-on: ubuntu-latest
@@ -293,11 +290,6 @@ jobs:
           name: veracode-package
           path: ${{ github.workspace }}
 
-      - name: Check Files
-        run: |
-          echo "PWD: $(pwd)"
-          ls -la ${{ github.workspace }}
-
       - name: Veracode Upload & Scan
         uses: veracode/veracode-uploadandscan-action@0.2.8
         with:
@@ -305,5 +297,5 @@ jobs:
           vkey: ${{ secrets.VKEY }}
           appname: 'Github - ${{ github.repository }}'
           createprofile: true
-          filepath: "${{ github.workspace }}/veracode.zip"
+          filepath: "${{ needs.build_auto.outputs.zipfile }}"
           version: ${{ github.run_id }}
