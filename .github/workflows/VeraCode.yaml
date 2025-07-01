@@ -8,7 +8,7 @@ on:
 jobs:
 
   # -----------------------------
-  # 🔹 Veracode SCA
+  # 🔹 Veracode SCA sempre roda
   # -----------------------------
   sca:
     name: Veracode SCA (SourceClear)
@@ -16,92 +16,104 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Run Veracode SCA
+      - name: Run Veracode SCA (via curl)
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SCA }}
         run: |
           curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s -- scan
 
   # -----------------------------
-  # 🔹 Detect Stack + Dir
+  # 🔹 Detecta stack + versão Flutter
   # -----------------------------
   detect_stack:
     name: Detect Project Stack
     runs-on: ubuntu-latest
     outputs:
       language: ${{ steps.detect.outputs.language }}
-      build_dir: ${{ steps.detect.outputs.build_dir }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - id: detect
-        name: Detect Language + Dir
+        name: Detect Language
         run: |
           lang="unknown"
-          build_dir="."
 
-          if path=$(find . -type f -name "pom.xml" | head -n 1); then
-            lang="maven"; build_dir=$(dirname "$path")
-            echo "✅ Maven Dir: $build_dir"
-          elif path=$(find . -type f -name "build.gradle" | head -n 1); then
-            lang="gradle"; build_dir=$(dirname "$path")
-            echo "✅ Gradle Dir: $build_dir"
-          elif path=$(find . -type f -name "build.gradle.kts" | head -n 1) || path=$(find . -type f -name "settings.gradle.kts" | head -n 1); then
-            lang="kotlin"; build_dir=$(dirname "$path")
-            echo "✅ Kotlin Dir: $build_dir"
-          elif path=$(find . -type f -name "build.xml" | head -n 1); then
-            lang="ant"; build_dir=$(dirname "$path")
-            echo "✅ Ant Dir: $build_dir"
+          # JAVA - Maven (normalmente na raiz)
+          if find . -name "pom.xml" | grep -q .; then
+            lang="maven"
+
+          # Gradle - pode estar em subpastas
+          elif find . -name "build.gradle" | grep -q .; then
+            lang="gradle"
+
+          # Kotlin (KTS) - pode estar em subpastas
+          elif find . -name "build.gradle.kts" | grep -q . || find . -name "settings.gradle.kts" | grep -q .; then
+            lang="kotlin"
+
+          # Ant (build.xml) - geralmente na raiz, mas vamos garantir
+          elif find . -name "build.xml" | grep -q .; then
+            lang="ant"
+
+          # .NET
           elif find . -name "*.sln" | grep -q . || find . -name "*.csproj" | grep -q .; then
             if grep -r -q "netcoreapp" ./*.csproj 2>/dev/null; then
-              lang="dotnet_core"; build_dir="."
-              echo "✅ .NET Core Dir: $build_dir"
+              lang="dotnet_core"
             else
-              lang="dotnet_framework"; build_dir="."
-              echo "✅ .NET Framework Dir: $build_dir"
+              lang="dotnet_framework"
             fi
-          elif path=$(find . -type f -name "package.json" | head -n 1); then
-            lang="node"; build_dir=$(dirname "$path")
-            echo "✅ Node Dir: $build_dir"
-          elif path=$(find . -type f -name "pyproject.toml" | head -n 1) || path=$(find . -type f -name "setup.py" | head -n 1); then
-            lang="python"; build_dir=$(dirname "$path")
-            echo "✅ Python Dir: $build_dir"
-          elif path=$(find . -type f -name "composer.json" | head -n 1); then
-            lang="php"; build_dir=$(dirname "$path")
-            echo "✅ PHP Dir: $build_dir"
-          elif path=$(find . -type f -name "Gemfile" | head -n 1); then
-            lang="ruby"; build_dir=$(dirname "$path")
-            echo "✅ Ruby Dir: $build_dir"
-          elif path=$(find . -type f -name "go.mod" | head -n 1); then
-            lang="go"; build_dir=$(dirname "$path")
-            echo "✅ Go Dir: $build_dir"
-          elif path=$(find . -type f -name "Cargo.toml" | head -n 1); then
-            lang="rust"; build_dir=$(dirname "$path")
-            echo "✅ Rust Dir: $build_dir"
-          elif path=$(find . -type f -name "Makefile" | head -n 1) || path=$(find . -type f -name "CMakeLists.txt" | head -n 1); then
-            lang="cpp"; build_dir=$(dirname "$path")
-            echo "✅ C++ Dir: $build_dir"
-          elif path=$(find . -type f -name "AndroidManifest.xml" | head -n 1); then
-            lang="android"; build_dir=$(dirname "$path")
-            echo "✅ Android Dir: $build_dir"
-          elif path=$(find . -type f -name "pubspec.yaml" | head -n 1); then
-            if grep -q "sdk: \">=2.12.0" "$path"; then
+
+          # NodeJS
+          elif find . -name "package.json" | grep -q .; then
+            lang="node"
+
+          # Python
+          elif find . -name "pyproject.toml" | grep -q . || find . -name "setup.py" | grep -q .; then
+            lang="python"
+
+          # PHP (Composer)
+          elif find . -name "composer.json" | grep -q .; then
+            lang="php"
+
+          # Ruby
+          elif find . -name "Gemfile" | grep -q .; then
+            lang="ruby"
+
+          # Go
+          elif find . -name "go.mod" | grep -q .; then
+            lang="go"
+
+          # Rust
+          elif find . -name "Cargo.toml" | grep -q .; then
+            lang="rust"
+
+          # C++ Makefile / CMakeLists
+          elif find . -name "Makefile" | grep -q . || find . -name "CMakeLists.txt" | grep -q .; then
+            lang="cpp"
+
+          # Android
+          elif find . -name "AndroidManifest.xml" | grep -q .; then
+            lang="android"
+
+          # Flutter
+          elif find . -name "pubspec.yaml" | grep -q .; then
+            # Checa se pubspec tem SDK moderno
+            if grep -r -q "sdk: \">=2.12.0" $(find . -name "pubspec.yaml"); then
               lang="flutter_modern"
             else
               lang="flutter_legacy"
             fi
-            build_dir=$(dirname "$path")
-            echo "✅ Flutter Dir: $build_dir"
+
+          # iOS/Swift (Podfile ou pasta ios/)
           elif find . -name "Podfile" | grep -q . || [ -d "ios" ]; then
-            lang="ios"; build_dir="."
-            echo "✅ iOS Dir: $build_dir"
+            lang="ios"
+
           else
-            lang="fallback"; build_dir="."
-            echo "⚠️ Fallback Dir: $build_dir"
+            lang="fallback"
           fi
 
           echo "language=$lang" >> $GITHUB_OUTPUT
-          echo "build_dir=$build_dir" >> $GITHUB_OUTPUT
+          echo "✅ Detected: $lang"
+
 
   # -----------------------------
   # 🔹 Build Linux
@@ -156,62 +168,65 @@ jobs:
       - id: build
         name: Build Project
         run: |
+          mkdir -p output
           lang="${{ needs.detect_stack.outputs.language }}"
-          build_dir="${{ needs.detect_stack.outputs.build_dir }}"
 
-          echo "✅ Building: $lang"
-          echo "➡️ Dir: $build_dir"
-
-          mkdir -p $GITHUB_WORKSPACE/output
-          cd "$build_dir"
+          echo "✅ Language: $lang"
+          [ "$lang" = "maven" ] && echo "➡️ Java: 17"
+          [ "$lang" = "gradle" ] && echo "➡️ Java: 17"
+          [ "$lang" = "kotlin" ] && echo "➡️ Java: 17"
+          [ "$lang" = "node" ] && echo "➡️ Node: 20.x"
+          [ "$lang" = "python" ] && echo "➡️ Python: 3.10"
+          [ "$lang" = "flutter_modern" ] && echo "➡️ Flutter: 3.x"
+          [ "$lang" = "flutter_legacy" ] && echo "➡️ Flutter: 2.10.5"
 
           if [ "$lang" = "maven" ]; then
-            mvn clean package && cp -r target/* $GITHUB_WORKSPACE/output/
+            mvn clean package && cp -r target/* output/
           elif [ "$lang" = "gradle" ] || [ "$lang" = "kotlin" ]; then
             gradle build || ./gradlew build
-            cp -r build/libs/* $GITHUB_WORKSPACE/output/
+            cp -r build/libs/* output/
           elif [ "$lang" = "ant" ]; then
             ant debug || ant release || ant build
-            cp -r build/* $GITHUB_WORKSPACE/output/
+            cp -r build/* output/
           elif [ "$lang" = "dotnet_core" ]; then
             dotnet restore && dotnet build --configuration Release
-            cp -r bin/* $GITHUB_WORKSPACE/output/
+            cp -r bin/* output/
           elif [ "$lang" = "node" ]; then
             npm install && npm run build || true
-            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude node_modules --exclude .git
+            rsync -av ./ ./output --exclude output --exclude node_modules --exclude .git
           elif [ "$lang" = "python" ]; then
             sudo apt-get update && sudo apt-get install -y libjpeg-dev zlib1g-dev libpng-dev
             pip install .
-            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude .git
+            rsync -av ./ ./output --exclude output --exclude .git
           elif [ "$lang" = "php" ]; then
             composer install || true
-            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude vendor --exclude .git
+            rsync -av ./ ./output --exclude output --exclude vendor --exclude .git
           elif [ "$lang" = "ruby" ]; then
             bundle install || true
-            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude .git
+            rsync -av ./ ./output --exclude output --exclude .git
           elif [ "$lang" = "go" ]; then
             sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev pkg-config
             go mod tidy && go build -o app
-            cp app $GITHUB_WORKSPACE/output/
+            cp app output/
           elif [ "$lang" = "rust" ]; then
-            cargo build --release && cp target/release/* $GITHUB_WORKSPACE/output/
+            cargo build --release && cp target/release/* output/
           elif [ "$lang" = "cpp" ]; then
             make || cmake . && make
-            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude .git
+            rsync -av ./ ./output --exclude output --exclude .git
           elif [ "$lang" = "android" ]; then
-            ./gradlew assembleDebug && cp app/build/outputs/apk/debug/*.apk $GITHUB_WORKSPACE/output/
+            ./gradlew assembleDebug && cp app/build/outputs/apk/debug/*.apk output/
           elif [[ "$lang" == flutter* ]]; then
             flutter pub get && flutter build apk --debug --split-debug-info=output/
-            cp -r build/app/outputs/flutter-apk/*.apk $GITHUB_WORKSPACE/output/
+            cp -r build/app/outputs/flutter-apk/*.apk output/
           elif [ "$lang" = "fallback" ]; then
-            rsync -av ./ $GITHUB_WORKSPACE/output --exclude output --exclude .git
+            rsync -av ./ ./output --exclude output --exclude .git
           fi
 
       - id: set_output
         run: echo "artifact_path=output" >> $GITHUB_OUTPUT
 
       - name: Package Artifact
-        run: cd $GITHUB_WORKSPACE && zip -r veracode.zip output
+        run: zip -r veracode.zip output
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -227,6 +242,8 @@ jobs:
     runs-on: windows-latest
     needs: detect_stack
     if: needs.detect_stack.outputs.language == 'dotnet_framework'
+    outputs:
+      artifact_path: ${{ steps.set_output.outputs.artifact_path }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -235,6 +252,8 @@ jobs:
           msbuild *.sln /p:Configuration=Release
           mkdir output
           Copy-Item -Path .\bin\* -Destination .\output -Recurse
+      - id: set_output
+        run: echo "artifact_path=output" >> $Env:GITHUB_OUTPUT
       - name: Package Artifact
         run: Compress-Archive -Path output -DestinationPath veracode.zip
       - name: Upload Artifact
@@ -251,6 +270,8 @@ jobs:
     runs-on: macos-latest
     needs: detect_stack
     if: needs.detect_stack.outputs.language == 'ios'
+    outputs:
+      artifact_path: ${{ steps.set_output.outputs.artifact_path }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -258,6 +279,8 @@ jobs:
         run: |
           mkdir -p output
           rsync -av ./ ./output --exclude output --exclude .git
+      - id: set_output
+        run: echo "artifact_path=output" >> $GITHUB_OUTPUT
       - name: Package Artifact
         run: zip -r veracode.zip output
       - name: Upload Artifact
