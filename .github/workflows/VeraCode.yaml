@@ -1,4 +1,4 @@
-name: Veracode Ultra Workflow (CLI Auto-Packager + Fallback Manual + Full Detect)
+name: Veracode Ultra Workflow (Full Auto-Packager + Version Detect + Fallback)
 
 on:
   push:
@@ -24,23 +24,29 @@ jobs:
           curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s -- scan
 
   # -----------------------------
-  # 🔹 Detect FULL Stack
+  # 🔹 Detect FULL Stack + Version
   # -----------------------------
   detect_stack:
-    name: Detect Project Stack (Full)
+    name: Detect Project Stack + Version
     runs-on: ubuntu-latest
     outputs:
       language: ${{ steps.detect.outputs.language }}
       build_path: ${{ steps.detect.outputs.build_path }}
+      node_version: ${{ steps.detect.outputs.node_version }}
+      python_version: ${{ steps.detect.outputs.python_version }}
+      go_version: ${{ steps.detect.outputs.go_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.2
 
       - id: detect
-        name: Detect Language and Path
+        name: Detect Language, Path & Versions
         run: |
           lang="unsupported"
           build_path="."
+          node_version="20"
+          python_version="3.10"
+          go_version="1.21"
 
           echo "🔍 Iniciando detecção..."
 
@@ -63,12 +69,19 @@ jobs:
               lang="node"
             fi
             build_path=$(dirname "$(find . -name "package.json" | head -n1)")
+            if [ -f .nvmrc ]; then
+              node_version=$(cat .nvmrc)
+            else
+              node_version=$(node -p "require('./package.json').engines?.node || '20'")
+            fi
           elif find . -name "pyproject.toml" | grep -q . || find . -name "setup.py" | grep -q .; then
             lang="python"
             build_path=$(dirname "$(find . -name "pyproject.toml" -o -name "setup.py" | head -n1)")
+            python_version=$(grep -m1 'python =' pyproject.toml | sed 's/.*"\(.*\)"/\1/') || python_version="3.10"
           elif find . -name "go.mod" | grep -q .; then
             lang="go"
             build_path=$(dirname "$(find . -name "go.mod" | head -n1)")
+            go_version=$(grep '^go ' go.mod | awk '{print $2}') || go_version="1.21"
           elif find . -name "*.sln" | grep -q . || find . -name "*.csproj" | grep -q .; then
             lang="dotnet_framework"
             build_path=$(dirname "$(find . -name "*.sln" -o -name "*.csproj" | head -n1)")
@@ -87,10 +100,16 @@ jobs:
           elif find . -name "Podfile" | grep -q . || [ -d "ios" ]; then
             lang="ios"
             build_path="ios"
+          elif find . -name "pubspec.yaml" | grep -q .; then
+            lang="flutter"
+            build_path=$(dirname "$(find . -name "pubspec.yaml" | head -n1)")
           fi
 
           echo "✅ Linguagem detectada: $lang"
           echo "📂 Caminho build: $build_path"
+          echo "🟢 Node version: $node_version"
+          echo "🟢 Python version: $python_version"
+          echo "🟢 Go version: $go_version"
 
           if [ "$lang" = "unsupported" ]; then
             echo "❌ Linguagem não suportada!"
@@ -99,6 +118,9 @@ jobs:
 
           echo "language=$lang" >> $GITHUB_OUTPUT
           echo "build_path=$build_path" >> $GITHUB_OUTPUT
+          echo "node_version=$node_version" >> $GITHUB_OUTPUT
+          echo "python_version=$python_version" >> $GITHUB_OUTPUT
+          echo "go_version=$go_version" >> $GITHUB_OUTPUT
 
   # -----------------------------
   # 🔹 Build Auto-Packager (CLI)
@@ -119,6 +141,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.2
+
+      - name: Setup Node
+        if: |
+          needs.detect_stack.outputs.language == 'node' ||
+          needs.detect_stack.outputs.language == 'react_native'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ needs.detect_stack.outputs.node_version }}
+
+      - name: Setup Python
+        if: needs.detect_stack.outputs.language == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.detect_stack.outputs.python_version }}
+
+      - name: Setup Go
+        if: needs.detect_stack.outputs.language == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ needs.detect_stack.outputs.go_version }}
 
       - name: Install Veracode CLI & Run Auto-Packager
         run: |
@@ -142,13 +184,20 @@ jobs:
       needs.detect_stack.outputs.language == 'cpp' ||
       needs.detect_stack.outputs.language == 'ant' ||
       needs.detect_stack.outputs.language == 'php' ||
-      needs.detect_stack.outputs.language == 'ruby'
+      needs.detect_stack.outputs.language == 'ruby' ||
+      needs.detect_stack.outputs.language == 'flutter'
     defaults:
       run:
         working-directory: ${{ needs.detect_stack.outputs.build_path }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.2
+
+      - name: Setup Flutter
+        if: needs.detect_stack.outputs.language == 'flutter'
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
 
       - name: Manual Build
         run: |
@@ -164,6 +213,10 @@ jobs:
             composer install || true && rsync -av ./ ./output --exclude output --exclude vendor --exclude .git
           elif [ "$lang" = "ruby" ]; then
             bundle install || true && rsync -av ./ ./output --exclude output --exclude .git
+          elif [ "$lang" = "flutter" ]; then
+            flutter pub get
+            flutter build apk --debug
+            cp build/app/outputs/flutter-apk/*.apk output/
           fi
 
       - name: Package Manual Output
@@ -204,7 +257,7 @@ jobs:
           path: veracode.zip
 
   # -----------------------------
-  # 🔹 Veracode Pipeline Scan (Official)
+  # 🔹 Veracode Pipeline Scan
   # -----------------------------
   pipeline_scan:
     name: Veracode Pipeline Scan
@@ -219,7 +272,7 @@ jobs:
           name: veracode-package
 
       - name: Run Veracode Pipeline Scan
-        uses: veracode/Veracode-pipeline-scan-action@v1.2.0
+        uses: veracode/Veracode-pipeline-scan-action@main
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
@@ -242,7 +295,7 @@ jobs:
           name: veracode-package
 
       - name: Veracode Upload & Scan
-        uses: veracode/veracode-uploadandscan-action@v1.0.9
+        uses: veracode/veracode-uploadandscan-action@master
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
