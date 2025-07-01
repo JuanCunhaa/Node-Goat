@@ -1,4 +1,4 @@
-name: Veracode Ultra Workflow (Auto-Packager + Manual Linux/macOS + Workspace)
+name: Veracode Ultra Workflow (Granular + Auto-Packager + Manual + Basename Fix)
 
 on:
   push:
@@ -7,23 +7,19 @@ on:
 
 jobs:
 
-  # 🔹 Veracode SCA (SourceClear)
+  # 🔹 Veracode SCA
   sca:
-    name: Veracode SCA (SourceClear)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
-
+      - uses: actions/checkout@v4.1.2
       - name: Run Veracode SCA
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SCA }}
         run: |
           curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s -- scan
 
-  # 🔹 Detect Stack + Version
+  # 🔹 Detect FULL Stack + Version
   detect_stack:
-    name: Detect Project Stack + Version
     runs-on: ubuntu-latest
     outputs:
       language: ${{ steps.detect.outputs.language }}
@@ -32,36 +28,36 @@ jobs:
       python_version: ${{ steps.detect.outputs.python_version }}
       go_version: ${{ steps.detect.outputs.go_version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
-
+      - uses: actions/checkout@v4.1.2
       - id: detect
-        name: Detect Language, Path & Versions
         run: |
           lang="unsupported"
-          build_path="${GITHUB_WORKSPACE}"
+          build_path="${{ github.workspace }}"
           node_version=""
           python_version=""
           go_version=""
 
-          echo "🔍 Detecting language and version..."
-
-          cd "${GITHUB_WORKSPACE}"
+          echo "🔍 Iniciando detecção..."
 
           if find . -name "pom.xml" | grep -q .; then
             lang="maven"
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "pom.xml" | head -n1)")"
           elif find . -name "build.gradle" | grep -q .; then
             lang="gradle"
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "build.gradle" | head -n1)")"
           elif find . -name "build.gradle.kts" | grep -q .; then
             lang="kotlin"
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "build.gradle.kts" | head -n1)")"
           elif find . -name "AndroidManifest.xml" | grep -q .; then
             lang="android"
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "AndroidManifest.xml" | head -n1)")"
           elif find . -name "package.json" | grep -q .; then
             if grep -q "react-native" package.json; then
               lang="react_native"
             else
               lang="node"
             fi
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "package.json" | head -n1)")"
             if [ -f .nvmrc ]; then
               node_version=$(cat .nvmrc)
             else
@@ -69,36 +65,42 @@ jobs:
             fi
           elif find . -name "pyproject.toml" | grep -q . || find . -name "setup.py" | grep -q .; then
             lang="python"
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "pyproject.toml" -o -name "setup.py" | head -n1)")"
             python_version=$(grep -m1 'python =' pyproject.toml | sed 's/.*"\(.*\)"/\1/') || python_version="3.10"
           elif find . -name "go.mod" | grep -q .; then
             lang="go"
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "go.mod" | head -n1)")"
             go_version=$(grep '^go ' go.mod | awk '{print $2}') || go_version="1.21"
           elif find . -name "*.sln" | grep -q . || find . -name "*.csproj" | grep -q .; then
             lang="dotnet_framework"
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "*.sln" -o -name "*.csproj" | head -n1)")"
           elif find . -name "Makefile" | grep -q . || find . -name "CMakeLists.txt" | grep -q .; then
             lang="cpp"
+            build_path="${{ github.workspace }}"
           elif find . -name "build.xml" | grep -q .; then
             lang="ant"
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "build.xml" | head -n1)")"
           elif find . -name "composer.json" | grep -q .; then
             lang="php"
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "composer.json" | head -n1)")"
           elif find . -name "Gemfile" | grep -q .; then
             lang="ruby"
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "Gemfile" | head -n1)")"
           elif find . -name "Podfile" | grep -q . || [ -d "ios" ]; then
             lang="ios"
+            build_path="${{ github.workspace }}/ios"
           elif find . -name "pubspec.yaml" | grep -q .; then
             lang="flutter"
+            build_path="${{ github.workspace }}/$(dirname "$(find . -name "pubspec.yaml" | head -n1)")"
           fi
 
           echo "✅ Language: $lang"
-          echo "📂 Build Path: $build_path"
-          echo "🟢 Node: $node_version"
-          echo "🟢 Python: $python_version"
-          echo "🟢 Go: $go_version"
+          echo "📂 Path: $build_path"
+          [ -n "$node_version" ] && echo "🟢 Node: $node_version"
+          [ -n "$python_version" ] && echo "🟢 Python: $python_version"
+          [ -n "$go_version" ] && echo "🟢 Go: $go_version"
 
-          if [ "$lang" = "unsupported" ]; then
-            echo "❌ Unsupported language!"
-            exit 1
-          fi
+          if [ "$lang" = "unsupported" ]; then exit 1; fi
 
           echo "language=$lang" >> $GITHUB_OUTPUT
           echo "build_path=$build_path" >> $GITHUB_OUTPUT
@@ -106,9 +108,8 @@ jobs:
           echo "python_version=$python_version" >> $GITHUB_OUTPUT
           echo "go_version=$go_version" >> $GITHUB_OUTPUT
 
-  # 🔹 Auto-Packager (CLI)
+  # 🔹 Auto-Packager
   build_auto:
-    name: Veracode CLI Auto-Packager
     runs-on: ubuntu-latest
     needs: detect_stack
     if: |
@@ -120,45 +121,42 @@ jobs:
       needs.detect_stack.outputs.language == 'react_native' ||
       needs.detect_stack.outputs.language == 'python' ||
       needs.detect_stack.outputs.language == 'go'
+    defaults:
+      run:
+        working-directory: ${{ needs.detect_stack.outputs.build_path }}
+    outputs:
+      zipfile: ${{ steps.find_zip.outputs.zipfile }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
-
-      - name: Setup Node
-        if: |
+      - uses: actions/checkout@v4.1.2
+      - if: |
           needs.detect_stack.outputs.language == 'node' ||
           needs.detect_stack.outputs.language == 'react_native'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ needs.detect_stack.outputs.node_version }}
-
-      - name: Setup Python
-        if: needs.detect_stack.outputs.language == 'python'
+      - if: needs.detect_stack.outputs.language == 'python'
         uses: actions/setup-python@v5
         with:
           python-version: ${{ needs.detect_stack.outputs.python_version }}
-
-      - name: Setup Go
-        if: needs.detect_stack.outputs.language == 'go'
+      - if: needs.detect_stack.outputs.language == 'go'
         uses: actions/setup-go@v5
         with:
           go-version: ${{ needs.detect_stack.outputs.go_version }}
-
-      - name: Install Veracode CLI & Auto-Package
-        run: |
+      - run: |
           mkdir -p "${GITHUB_WORKSPACE}/veracode-out"
           curl -sSfL https://tools.veracode.com/veracode-cli/install | sh
-          ./veracode package --source "${GITHUB_WORKSPACE}" --output "${GITHUB_WORKSPACE}/veracode-out/veracode-auto.zip" --trust
-
-      - name: Upload Auto-Packager Artifact
-        uses: actions/upload-artifact@v4
+          ./veracode package --source . --output "${GITHUB_WORKSPACE}/veracode-out" --trust
+      - id: find_zip
+        run: |
+          found=$(find "${GITHUB_WORKSPACE}/veracode-out" -name '*.zip' | head -n1)
+          echo "zipfile=$(basename $found)" >> $GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v4
         with:
           name: veracode-package
-          path: "${GITHUB_WORKSPACE}/veracode-out/veracode-auto.zip"
+          path: "${GITHUB_WORKSPACE}/veracode-out/${{ steps.find_zip.outputs.zipfile }}"
 
-  # 🔹 Manual Build Linux (Fallback)
+  # 🔹 Manual Linux
   build_manual:
-    name: Build Manual (Linux Fallback)
     runs-on: ubuntu-latest
     needs: detect_stack
     if: |
@@ -168,110 +166,78 @@ jobs:
       needs.detect_stack.outputs.language == 'ruby' ||
       needs.detect_stack.outputs.language == 'flutter'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
-
-      - name: Setup Flutter
-        if: needs.detect_stack.outputs.language == 'flutter'
+      - uses: actions/checkout@v4.1.2
+      - if: needs.detect_stack.outputs.language == 'flutter'
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.x'
-
-      - name: Manual Build
-        run: |
+      - run: |
           mkdir -p "${GITHUB_WORKSPACE}/veracode-out/output"
-          cd "${GITHUB_WORKSPACE}"
           lang="${{ needs.detect_stack.outputs.language }}"
-
-          if [ "$lang" = "cpp" ]; then
-            make || cmake . && make && cp -r ./ "${GITHUB_WORKSPACE}/veracode-out/output/"
-          elif [ "$lang" = "ant" ]; then
-            ant build && cp -r build/* "${GITHUB_WORKSPACE}/veracode-out/output/"
-          elif [ "$lang" = "php" ]; then
-            composer install || true && rsync -av ./ "${GITHUB_WORKSPACE}/veracode-out/output" --exclude vendor --exclude .git
-          elif [ "$lang" = "ruby" ]; then
-            bundle install || true && rsync -av ./ "${GITHUB_WORKSPACE}/veracode-out/output" --exclude .git
-          elif [ "$lang" = "flutter" ]; then
-            flutter pub get && flutter build apk --debug
-            cp build/app/outputs/flutter-apk/*.apk "${GITHUB_WORKSPACE}/veracode-out/output/"
+          if [ "$lang" = "cpp" ]; then make || cmake . && make && cp -r ./ "${GITHUB_WORKSPACE}/veracode-out/output/"
+          elif [ "$lang" = "ant" ]; then ant build && cp -r build/* "${GITHUB_WORKSPACE}/veracode-out/output/"
+          elif [ "$lang" = "php" ]; then composer install || true && rsync -av ./ "${GITHUB_WORKSPACE}/veracode-out/output" --exclude vendor --exclude .git
+          elif [ "$lang" = "ruby" ]; then bundle install || true && rsync -av ./ "${GITHUB_WORKSPACE}/veracode-out/output" --exclude .git
+          elif [ "$lang" = "flutter" ]; then flutter pub get && flutter build apk --debug && cp build/app/outputs/flutter-apk/*.apk "${GITHUB_WORKSPACE}/veracode-out/output/"
           fi
-
-      - name: Package Manual Build
-        run: |
+      - run: |
           cd "${GITHUB_WORKSPACE}/veracode-out"
           zip -r veracode-manual.zip output
-
-      - name: Upload Manual Artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: veracode-package
           path: "${GITHUB_WORKSPACE}/veracode-out/veracode-manual.zip"
 
-  # 🔹 Manual Build macOS (iOS Fallback)
+  # 🔹 Manual macOS
   build_manual_mac:
-    name: Build Manual (macOS Fallback)
     runs-on: macos-latest
     needs: detect_stack
     if: needs.detect_stack.outputs.language == 'ios'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.1.2
-
+      - uses: actions/checkout@v4.1.2
       - run: |
           mkdir -p "${GITHUB_WORKSPACE}/veracode-out/output"
           rsync -av ./ "${GITHUB_WORKSPACE}/veracode-out/output" --exclude .git
-
-      - name: Package macOS Output
-        run: |
+      - run: |
           cd "${GITHUB_WORKSPACE}/veracode-out"
           zip -r veracode-ios.zip output
-
-      - name: Upload macOS Artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: veracode-package
           path: "${GITHUB_WORKSPACE}/veracode-out/veracode-ios.zip"
 
-  # 🔹 Veracode Pipeline Scan
+  # 🔹 Pipeline Scan
   pipeline_scan:
-    name: Veracode Pipeline Scan
     runs-on: ubuntu-latest
     needs: [build_auto, build_manual, build_manual_mac]
     if: always()
     steps:
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: veracode-package
           path: "${GITHUB_WORKSPACE}/veracode-out"
-
-      - name: Run Veracode Pipeline Scan
-        uses: veracode/Veracode-pipeline-scan-action@v1.0.18
+      - uses: veracode/Veracode-pipeline-scan-action@v1.0.18
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
           file: "${GITHUB_WORKSPACE}/veracode-out/*.zip"
           fail_build: true
 
-  # 🔹 Veracode Upload & Scan
+  # 🔹 Upload & Scan
   sast:
-    name: Veracode Upload & Scan
     runs-on: ubuntu-latest
-    needs: [build_auto, build_manual, build_manual_mac]
+    needs: [pipeline_scan]
     if: always()
     steps:
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: veracode-package
           path: "${GITHUB_WORKSPACE}/veracode-out"
-
-      - name: Veracode Upload & Scan
-        uses: veracode/veracode-uploadandscan-action@0.2.8
+      - uses: veracode/veracode-uploadandscan-action@0.2.8
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
-          appname: 'GitHub - ${{ github.repository }}'
+          appname: "GitHub - ${{ github.repository }}"
           createprofile: true
           filepath: "${GITHUB_WORKSPACE}/veracode-out/*.zip"
           version: ${{ github.run_id }}
