@@ -1,4 +1,4 @@
-name: Veracode Ultra Workflow (Auto-Packager CLI + Fallback Manual)
+name: Veracode Ultra Workflow (CLI Auto-Packager + Fallback Manual + Full Detect)
 
 on:
   push:
@@ -17,17 +17,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4.1.2
 
-      - name: Run Veracode SCA (via curl)
+      - name: Run Veracode SCA
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SCA }}
         run: |
           curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s -- scan
 
   # -----------------------------
-  # 🔹 Detecta linguagens fallback
+  # 🔹 Detect FULL Stack
   # -----------------------------
   detect_stack:
-    name: Detect Project Stack (Fallback)
+    name: Detect Project Stack (Full)
     runs-on: ubuntu-latest
     outputs:
       language: ${{ steps.detect.outputs.language }}
@@ -39,10 +39,37 @@ jobs:
       - id: detect
         name: Detect Language and Path
         run: |
-          lang="unknown"
+          lang="unsupported"
           build_path="."
 
-          if find . -name "*.sln" | grep -q . || find . -name "*.csproj" | grep -q .; then
+          echo "🔍 Iniciando detecção..."
+
+          if find . -name "pom.xml" | grep -q .; then
+            lang="maven"
+            build_path=$(dirname "$(find . -name "pom.xml" | head -n1)")
+          elif find . -name "build.gradle" | grep -q .; then
+            lang="gradle"
+            build_path=$(dirname "$(find . -name "build.gradle" | head -n1)")
+          elif find . -name "build.gradle.kts" | grep -q .; then
+            lang="kotlin"
+            build_path=$(dirname "$(find . -name "build.gradle.kts" | head -n1)")
+          elif find . -name "AndroidManifest.xml" | grep -q .; then
+            lang="android"
+            build_path=$(dirname "$(find . -name "AndroidManifest.xml" | head -n1)")
+          elif find . -name "package.json" | grep -q .; then
+            if grep -q "react-native" package.json; then
+              lang="react_native"
+            else
+              lang="node"
+            fi
+            build_path=$(dirname "$(find . -name "package.json" | head -n1)")
+          elif find . -name "pyproject.toml" | grep -q . || find . -name "setup.py" | grep -q .; then
+            lang="python"
+            build_path=$(dirname "$(find . -name "pyproject.toml" -o -name "setup.py" | head -n1)")
+          elif find . -name "go.mod" | grep -q .; then
+            lang="go"
+            build_path=$(dirname "$(find . -name "go.mod" | head -n1)")
+          elif find . -name "*.sln" | grep -q . || find . -name "*.csproj" | grep -q .; then
             lang="dotnet_framework"
             build_path=$(dirname "$(find . -name "*.sln" -o -name "*.csproj" | head -n1)")
           elif find . -name "Makefile" | grep -q . || find . -name "CMakeLists.txt" | grep -q .; then
@@ -60,26 +87,35 @@ jobs:
           elif find . -name "Podfile" | grep -q . || [ -d "ios" ]; then
             lang="ios"
             build_path="ios"
-          else
-            lang="supported"  # se não achar, assume suportado pelo Auto-Packager
-            build_path="."
           fi
 
-          echo "✅ Detected: $lang"
-          echo "📂 Build Path: $build_path"
+          echo "✅ Linguagem detectada: $lang"
+          echo "📂 Caminho build: $build_path"
+
+          if [ "$lang" = "unsupported" ]; then
+            echo "❌ Linguagem não suportada!"
+            exit 1
+          fi
 
           echo "language=$lang" >> $GITHUB_OUTPUT
           echo "build_path=$build_path" >> $GITHUB_OUTPUT
 
   # -----------------------------
-  # 🔹 Build Auto-Packager CLI
+  # 🔹 Build Auto-Packager (CLI)
   # -----------------------------
   build_auto:
     name: Build with Veracode CLI Auto-Packager
     runs-on: ubuntu-latest
     needs: detect_stack
     if: |
-      needs.detect_stack.outputs.language == 'supported'
+      needs.detect_stack.outputs.language == 'maven' ||
+      needs.detect_stack.outputs.language == 'gradle' ||
+      needs.detect_stack.outputs.language == 'kotlin' ||
+      needs.detect_stack.outputs.language == 'android' ||
+      needs.detect_stack.outputs.language == 'node' ||
+      needs.detect_stack.outputs.language == 'react_native' ||
+      needs.detect_stack.outputs.language == 'python' ||
+      needs.detect_stack.outputs.language == 'go'
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.2
@@ -87,7 +123,7 @@ jobs:
       - name: Install Veracode CLI & Run Auto-Packager
         run: |
           curl -sSfL https://tools.veracode.com/veracode-cli/install | sh
-          ./veracode package --source . --output veracode_out.zip
+          ./veracode package --source . --output veracode_out.zip --trust
 
       - name: Upload Auto-Packager Artifact
         uses: actions/upload-artifact@v4
@@ -96,7 +132,7 @@ jobs:
           path: veracode_out.zip
 
   # -----------------------------
-  # 🔹 Build Manual (Linux Fallback)
+  # 🔹 Build Manual Linux (Fallback)
   # -----------------------------
   build_manual:
     name: Build Manual (Linux Fallback)
@@ -114,12 +150,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4.1.2
 
-      - id: build
-        name: Manual Build
+      - name: Manual Build
         run: |
           mkdir -p output
           lang="${{ needs.detect_stack.outputs.language }}"
-
           echo "➡️ Manual Building: $lang"
 
           if [ "$lang" = "cpp" ]; then
@@ -170,7 +204,7 @@ jobs:
           path: veracode.zip
 
   # -----------------------------
-  # 🔹 Veracode Pipeline Scan (Action Oficial)
+  # 🔹 Veracode Pipeline Scan (Official)
   # -----------------------------
   pipeline_scan:
     name: Veracode Pipeline Scan
@@ -184,7 +218,7 @@ jobs:
         with:
           name: veracode-package
 
-      - name: Run Veracode Pipeline Scan (Official Action)
+      - name: Run Veracode Pipeline Scan
         uses: veracode/Veracode-pipeline-scan-action@v1.2.0
         with:
           vid: ${{ secrets.VID }}
