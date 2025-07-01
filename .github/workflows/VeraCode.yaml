@@ -262,12 +262,17 @@ jobs:
           name: veracode-package
           path: .
 
+      - name: Check Files
+        run: |
+          echo "PWD: $(pwd)"
+          ls -la
+
       - name: Run Veracode Pipeline Scan
         uses: veracode/Veracode-pipeline-scan-action@v1.0.18
         with:
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
-          file: './veracode.zip'
+          file: '${{ github.workspace }}/veracode.zip'
           fail_build: true
 
   # 🔹 Veracode Upload & Scan
@@ -283,6 +288,11 @@ jobs:
           name: veracode-package
           path: .
 
+      - name: Check Files
+        run: |
+          echo "PWD: $(pwd)"
+          ls -la
+
       - name: Veracode Upload & Scan
         uses: veracode/veracode-uploadandscan-action@0.2.8
         with:
@@ -290,5 +300,5 @@ jobs:
           vkey: ${{ secrets.VKEY }}
           appname: 'Github - ${{ github.repository }}'
           createprofile: true
-          filepath: './veracode.zip'
+          filepath: '${{ github.workspace }}/veracode.zip'
           version: ${{ github.run_id }}
