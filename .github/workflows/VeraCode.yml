@@ -11,6 +11,9 @@ jobs:
     container:
       image: ghcr.io/YOUR_ORG/afrika-universal:latest
 
+    outputs:
+      stack: ${{ steps.detect.outputs.stack }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -21,32 +24,40 @@ jobs:
       - name: Build Universal
         run: chmod +x .github/Afrika/scripts/build-universal.sh && .github/Afrika/scripts/build-universal.sh ${{ steps.detect.outputs.stack }} ${{ steps.detect.outputs.path }}
 
-      - name: Pipeline Scan
+      - name: Veracode SCA (SourceClear)
+        env:
+          SRCCLR_API_TOKEN: ${{ secrets.SCA }}
+        run: |
+          curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s -- scan
+
+      - name: Veracode Pipeline Scan
         uses: veracode/Veracode-pipeline-scan-action@0.3.3
         with:
-          vid: ${{ secrets.VERACODE_API_ID }}
-          vkey: ${{ secrets.VERACODE_API_KEY }}
+          vid: ${{ secrets.VID }}
+          vkey: ${{ secrets.VKEY }}
           file: '**/*.zip'
           fail_build: true
 
-      - name: Upload And Scan
+      - name: Veracode Upload And Scan
         uses: veracode/veracode-uploadandscan-action@0.2.8
         with:
           appname: 'AfrikaUniversalApp'
           filepath: '**/*.zip'
-          vid: ${{ secrets.VERACODE_API_ID }}
-          vkey: ${{ secrets.VERACODE_API_KEY }}
+          vid: ${{ secrets.VID }}
+          vkey: ${{ secrets.VKEY }}
 
   universal-mac:
     runs-on: macos-latest
-    if: contains(steps.detect.outputs.stack, 'swift') || contains(steps.detect.outputs.stack, 'obj-c') || contains(steps.detect.outputs.stack, 'dart')
+    needs: universal-linux
+    if: contains(needs.universal-linux.outputs.stack, 'swift') || contains(needs.universal-linux.outputs.stack, 'obj-c') || contains(needs.universal-linux.outputs.stack, 'dart')
     steps:
       - uses: actions/checkout@v4
-      - run: echo "⚙️ Compilar Swift/iOS/Dart → Seu comando Xcodebuild ou Flutter aqui"
+      - run: echo "⚙️ Compilar Swift/iOS/Dart → Xcodebuild ou Flutter aqui"
 
   universal-windows:
     runs-on: windows-latest
-    if: contains(steps.detect.outputs.stack, 'classic-asp') || contains(steps.detect.outputs.stack, 'dotnet')
+    needs: universal-linux
+    if: contains(needs.universal-linux.outputs.stack, 'classic-asp')
     steps:
       - uses: actions/checkout@v4
-      - run: echo "⚙️ Build .NET Framework/ASP → Seu comando MSBuild/NuGet aqui"
+      - run: echo "⚙️ Build Classic ASP ou .NET Framework no Windows"
