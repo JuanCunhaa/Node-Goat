@@ -6,23 +6,76 @@ on:
   pull_request:
 
 jobs:
-  universal-linux:
+  detect:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/YOUR_ORG/afrika-universal:latest
-
     outputs:
       stack: ${{ steps.detect.outputs.stack }}
-
+      path: ${{ steps.detect.outputs.path }}
     steps:
       - uses: actions/checkout@v4
-
       - name: Detect Stack
         id: detect
         run: chmod +x .github/Afrika/scripts/detect-stack.sh && .github/Afrika/scripts/detect-stack.sh
 
-      - name: Build Universal
-        run: chmod +x .github/Afrika/scripts/build-universal.sh && .github/Afrika/scripts/build-universal.sh ${{ steps.detect.outputs.stack }} ${{ steps.detect.outputs.path }}
+  build-linux:
+    runs-on: ubuntu-latest
+    needs: detect
+    if: |
+      contains(needs.detect.outputs.stack, 'java') ||
+      contains(needs.detect.outputs.stack, 'scala') ||
+      contains(needs.detect.outputs.stack, 'kotlin') ||
+      contains(needs.detect.outputs.stack, 'node') ||
+      contains(needs.detect.outputs.stack, 'python') ||
+      contains(needs.detect.outputs.stack, 'go') ||
+      contains(needs.detect.outputs.stack, 'php') ||
+      contains(needs.detect.outputs.stack, 'ruby') ||
+      contains(needs.detect.outputs.stack, 'perl') ||
+      contains(needs.detect.outputs.stack, 'cpp') ||
+      contains(needs.detect.outputs.stack, 'coldfusion') ||
+      contains(needs.detect.outputs.stack, 'cobol') ||
+      contains(needs.detect.outputs.stack, 'abap')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Afrika Universal Image
+        run: |
+          docker build -t afrika-universal -f .github/Afrika/Dockerfile .
+
+      - name: Run Build Universal Inside Container
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/repo \
+            -w /repo \
+            afrika-universal \
+            bash -c "chmod +x .github/Afrika/scripts/build-universal.sh && .github/Afrika/scripts/build-universal.sh '${{ needs.detect.outputs.stack }}' '${{ needs.detect.outputs.path }}'"
+
+  build-mac:
+    runs-on: macos-latest
+    needs: detect
+    if: |
+      contains(needs.detect.outputs.stack, 'swift') ||
+      contains(needs.detect.outputs.stack, 'obj-c') ||
+      contains(needs.detect.outputs.stack, 'dart')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build on macOS
+        run: echo "⚙️ Compilar Swift/iOS/Dart → Xcodebuild ou Flutter aqui"
+
+  build-windows:
+    runs-on: windows-latest
+    needs: detect
+    if: |
+      contains(needs.detect.outputs.stack, 'classic-asp')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build on Windows
+        run: echo "⚙️ Build Classic ASP ou .NET Framework com MSBuild/NuGet"
+
+  veracode:
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-mac, build-windows]
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Veracode SCA (SourceClear)
         env:
@@ -45,19 +98,3 @@ jobs:
           filepath: '**/*.zip'
           vid: ${{ secrets.VID }}
           vkey: ${{ secrets.VKEY }}
-
-  universal-mac:
-    runs-on: macos-latest
-    needs: universal-linux
-    if: contains(needs.universal-linux.outputs.stack, 'swift') || contains(needs.universal-linux.outputs.stack, 'obj-c') || contains(needs.universal-linux.outputs.stack, 'dart')
-    steps:
-      - uses: actions/checkout@v4
-      - run: echo "⚙️ Compilar Swift/iOS/Dart → Xcodebuild ou Flutter aqui"
-
-  universal-windows:
-    runs-on: windows-latest
-    needs: universal-linux
-    if: contains(needs.universal-linux.outputs.stack, 'classic-asp')
-    steps:
-      - uses: actions/checkout@v4
-      - run: echo "⚙️ Build Classic ASP ou .NET Framework no Windows"
