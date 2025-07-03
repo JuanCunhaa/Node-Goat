@@ -1,0 +1,52 @@
+name: Afrika Universal Veracode CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  universal-linux:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/YOUR_ORG/afrika-universal:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect Stack
+        id: detect
+        run: chmod +x .github/Afrika/scripts/detect-stack.sh && .github/Afrika/scripts/detect-stack.sh
+
+      - name: Build Universal
+        run: chmod +x .github/Afrika/scripts/build-universal.sh && .github/Afrika/scripts/build-universal.sh ${{ steps.detect.outputs.stack }} ${{ steps.detect.outputs.path }}
+
+      - name: Pipeline Scan
+        uses: veracode/Veracode-pipeline-scan-action@0.3.3
+        with:
+          vid: ${{ secrets.VERACODE_API_ID }}
+          vkey: ${{ secrets.VERACODE_API_KEY }}
+          file: '**/*.zip'
+          fail_build: true
+
+      - name: Upload And Scan
+        uses: veracode/veracode-uploadandscan-action@0.2.8
+        with:
+          appname: 'AfrikaUniversalApp'
+          filepath: '**/*.zip'
+          vid: ${{ secrets.VERACODE_API_ID }}
+          vkey: ${{ secrets.VERACODE_API_KEY }}
+
+  universal-mac:
+    runs-on: macos-latest
+    if: contains(steps.detect.outputs.stack, 'swift') || contains(steps.detect.outputs.stack, 'obj-c') || contains(steps.detect.outputs.stack, 'dart')
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "⚙️ Compilar Swift/iOS/Dart → Seu comando Xcodebuild ou Flutter aqui"
+
+  universal-windows:
+    runs-on: windows-latest
+    if: contains(steps.detect.outputs.stack, 'classic-asp') || contains(steps.detect.outputs.stack, 'dotnet')
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "⚙️ Build .NET Framework/ASP → Seu comando MSBuild/NuGet aqui"
