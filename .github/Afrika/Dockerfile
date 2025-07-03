@@ -1,16 +1,16 @@
 # Usa base Ubuntu 22.04
 FROM ubuntu:22.04
 
-# Impede prompts interativos (evita travar no tzdata)
+# Impede prompts interativos (resolve travamento do tzdata)
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Define timezone fixo e configura tzdata sem prompt
+# Configura timezone fixo pra UTC
 RUN ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime && \
     apt-get update && \
     apt-get install -y tzdata && \
     dpkg-reconfigure --frontend noninteractive tzdata
 
-# Instala build tools e dependências gerais
+# Instala dependências gerais e ferramentas de build
 RUN apt-get update && \
     apt-get install -y \
       wget \
@@ -34,7 +34,10 @@ RUN apt-get update && \
       ruby-full \
       php \
       perl \
-      golang-go
+      golang-go \
+      lsb-release \
+      apt-transport-https \
+      gnupg
 
 # Instala Node.js via NVM com múltiplas versões + Yarn
 RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \
@@ -46,12 +49,11 @@ RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh |
     nvm install 20 && \
     npm install -g yarn
 
-# Instala .NET SDKs (corrigido)
-RUN apt-get update && \
-    apt-get install -y wget apt-transport-https software-properties-common gnupg && \
-    wget https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
-    dpkg -i packages-microsoft-prod.deb && \
-    rm packages-microsoft-prod.deb && \
+# Instala .NET SDKs (método oficial 2024/2025)
+RUN wget https://packages.microsoft.com/config/ubuntu/22.04/prod.list -O /etc/apt/sources.list.d/microsoft-prod.list && \
+    curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg && \
+    install -o root -g root -m 644 microsoft.gpg /etc/apt/trusted.gpg.d/ && \
+    rm microsoft.gpg && \
     apt-get update && \
     apt-get install -y dotnet-sdk-6.0 dotnet-sdk-7.0 dotnet-sdk-8.0
 
@@ -68,5 +70,5 @@ RUN apt-get install -y cpanminus
 RUN curl -L -o sbt.deb https://github.com/sbt/sbt/releases/download/v1.8.2/sbt-1.8.2.deb && \
     dpkg -i sbt.deb || apt-get install -y -f && rm sbt.deb
 
-# Limpa cache do APT pra reduzir camada final
+# Limpa cache do APT pra reduzir imagem final
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
