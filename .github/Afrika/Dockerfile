@@ -1,10 +1,10 @@
 # Usa base Ubuntu 22.04
 FROM ubuntu:22.04
 
-# Impede prompts interativos (resolve travamento do tzdata)
+# Impede prompts interativos (resolve tzdata)
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Configura timezone fixo pra UTC
+# Configura timezone fixo (UTC)
 RUN ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime && \
     apt-get update && \
     apt-get install -y tzdata && \
@@ -49,13 +49,22 @@ RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh |
     nvm install 20 && \
     npm install -g yarn
 
-# Instala .NET SDKs (método oficial 2024/2025)
+# Configura feed oficial Microsoft + instala .NET 8.0 pelo APT
 RUN wget https://packages.microsoft.com/config/ubuntu/22.04/prod.list -O /etc/apt/sources.list.d/microsoft-prod.list && \
     curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg && \
     install -o root -g root -m 644 microsoft.gpg /etc/apt/trusted.gpg.d/ && \
     rm microsoft.gpg && \
     apt-get update && \
-    apt-get install -y dotnet-sdk-6.0 dotnet-sdk-7.0 dotnet-sdk-8.0
+    apt-get install -y dotnet-sdk-8.0
+
+# Usa dotnet-install.sh para instalar versões adicionais (.NET 6 e 7)
+ENV PATH="/root/.dotnet:${PATH}"
+
+RUN curl -sSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && \
+    chmod +x dotnet-install.sh && \
+    ./dotnet-install.sh --version 6.0.420 && \
+    ./dotnet-install.sh --version 7.0.400 && \
+    rm dotnet-install.sh
 
 # Instala PHP Composer
 RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
@@ -70,5 +79,5 @@ RUN apt-get install -y cpanminus
 RUN curl -L -o sbt.deb https://github.com/sbt/sbt/releases/download/v1.8.2/sbt-1.8.2.deb && \
     dpkg -i sbt.deb || apt-get install -y -f && rm sbt.deb
 
-# Limpa cache do APT pra reduzir imagem final
+# Limpa cache pra reduzir tamanho da imagem
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
