@@ -39,17 +39,24 @@ RUN apt-get update && \
       apt-transport-https \
       gnupg
 
-# Instala Node.js via NVM com múltiplas versões + Yarn
+# Instala Node.js globalmente (última LTS) + Yarn
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g yarn
+
+# Se quiser múltiplas versões no PATH:
+# Instala Node 14, 16, 18 com nvm e copia pro PATH global
 RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \
     export NVM_DIR="/root/.nvm" && \
     [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" && \
-    nvm install 14 && \
-    nvm install 16 && \
-    nvm install 18 && \
-    nvm install 20 && \
-    npm install -g yarn
+    nvm install 14 && cp /root/.nvm/versions/node/v14*/bin/node /usr/local/bin/node14 && \
+    nvm install 16 && cp /root/.nvm/versions/node/v16*/bin/node /usr/local/bin/node16 && \
+    nvm install 18 && cp /root/.nvm/versions/node/v18*/bin/node /usr/local/bin/node18
 
-# Configura feed oficial Microsoft + instala .NET 8.0 pelo APT
+# Mantém o Node principal como v20.x do NodeSource + Yarn global
+# Node 14, 16, 18 acessíveis como `node14`, `node16`, `node18` se precisar
+
+# Instala .NET SDK 8.0 via feed oficial Microsoft + outras versões com dotnet-install.sh
 RUN wget https://packages.microsoft.com/config/ubuntu/22.04/prod.list -O /etc/apt/sources.list.d/microsoft-prod.list && \
     curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg && \
     install -o root -g root -m 644 microsoft.gpg /etc/apt/trusted.gpg.d/ && \
@@ -57,7 +64,7 @@ RUN wget https://packages.microsoft.com/config/ubuntu/22.04/prod.list -O /etc/ap
     apt-get update && \
     apt-get install -y dotnet-sdk-8.0
 
-# Usa dotnet-install.sh para instalar versões adicionais (.NET 6 e 7)
+# Usa dotnet-install.sh para versões 6 e 7
 ENV PATH="/root/.dotnet:${PATH}"
 
 RUN curl -sSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && \
@@ -79,5 +86,5 @@ RUN apt-get install -y cpanminus
 RUN curl -L -o sbt.deb https://github.com/sbt/sbt/releases/download/v1.8.2/sbt-1.8.2.deb && \
     dpkg -i sbt.deb || apt-get install -y -f && rm sbt.deb
 
-# Limpa cache pra reduzir tamanho da imagem
+# Limpa cache pra reduzir tamanho final
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
