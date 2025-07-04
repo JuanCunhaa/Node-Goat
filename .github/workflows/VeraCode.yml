@@ -17,9 +17,17 @@ jobs:
         id: detect
         run: chmod +x .github/Afrika/scripts/detect-stack.sh && .github/Afrika/scripts/detect-stack.sh
 
-  build-linux:
+  docker:
     runs-on: ubuntu-latest
     needs: detect
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Afrika Universal Image
+        run: docker build -t afrika-universal -f .github/Afrika/Dockerfile .
+
+  build-linux:
+    runs-on: ubuntu-latest
+    needs: [detect, docker]
     if: |
       contains(needs.detect.outputs.stack, 'java') ||
       contains(needs.detect.outputs.stack, 'scala') ||
@@ -36,11 +44,6 @@ jobs:
       contains(needs.detect.outputs.stack, 'abap')
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build Afrika Universal Image
-        run: |
-          docker build -t afrika-universal -f .github/Afrika/Dockerfile .
-
       - name: Run Build Universal Inside Container
         run: |
           docker run --rm \
