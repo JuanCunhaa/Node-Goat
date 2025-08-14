@@ -1,4 +1,6 @@
-name: Veracode SCA + Static Scan (SARIF unificado)
+# APIID, APIKEY e SRCCLR_API_TOKEN nos secrets
+
+name: Veracode SCA + AutoPackager + Pipeline Scan + SARIF + Upload And Scan
 
 on:
   push:
@@ -7,20 +9,43 @@ on:
 
 permissions:
   contents: read
-  security-events: write   # necessário para upload de SARIF ao Code Scanning
+  security-events: write
 
 jobs:
-  veracode-security:
+  veracode:
     runs-on: ubuntu-latest
     steps:
       - name: 🏁 Checkout
         uses: actions/checkout@v4
 
-      # ---------- STATIC: AutoPackager ----------
+      # 🔎 SCA primeiro (agent-based)
+      - name: 🧩 Veracode SCA (Agent-Based)
+        uses: veracode/veracode-sca@v2.1.9
+        env:
+          SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path: .
+          quick: false
+          create-issues: false
+          # recursive: true
+          # skip-collectors: "npm,gradle"
+          # allow-dirty: true
+
+      - name: 📦 Publicar resultado SCA como artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-sca-results
+          path: |
+            **/scaResults.json
+            **/scaResults.txt
+
       - name: 📦 Instalar Veracode CLI
         run: |
           curl -fsS https://tools.veracode.com/veracode-cli/install | sh
           ./veracode --version
+        # Docs CLI/autopackage: https://docs.veracode.com/ (citado abaixo)
 
       - name: 📁 Auto Packager (gera e renomeia zip)
         id: pack
@@ -40,168 +65,44 @@ jobs:
           mv -f "$zip_file" "$final_zip"
           echo "artifact=$final_zip" >> "$GITHUB_OUTPUT"
 
-      - name: 🔍 Static Pipeline Scan (gera JSON)
-        uses: veracode/Veracode-pipeline-scan-action@v1.0.18
+      - name: 🔍 Veracode Pipeline Scan (gera JSON)
+        uses: veracode/Veracode-pipeline-scan-action@v1.0.9
         with:
-          vid:  ${{ secrets.VERACODE_API_ID }}
-          vkey: ${{ secrets.VERACODE_API_KEY }}
+          vid: ${{ secrets.VID }}
+          vkey: ${{ secrets.VKEY }}
           file: ${{ steps.pack.outputs.artifact }}
           json_output: true
-          json_output_file: results-static.json
+          json_output_file: results.json
 
-      - name: 🔄 Converter STATIC JSON -> SARIF (sem upload)
+      - name: 🔄 Converter JSON -> SARIF + Upload
         uses: veracode/veracode-pipeline-scan-results-to-sarif@v2.0.3
         with:
           scan-type: pipeline
-          pipeline-results-json: results-static.json
-          output-results-sarif: veracode-static.sarif
-          noupload: true
+          pipeline-results-json: results.json
+          output-results-sarif: veracode-results.sarif
+          githubToken: ${{ github.token }}
 
-      # ---------- SCA: SourceClear ----------
-      - name: 🔬 Veracode SCA (gera JSON)
-        env:
-          SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          curl -sSL https://download.sourceclear.com/ci.sh | bash -s -- scan --json > sca-results.json
-          test -s sca-results.json || (echo "SCA não retornou JSON." >&2; exit 1)
-
-      - name: 🔄 Converter SCA JSON -> SARIF
-        run: |
-          python3 - <<'PY'
-          import json, os, sys, hashlib
-
-          def sev_to_level(sev):
-            # tenta normalizar severidade do SCA → níveis do GitHub
-            s = (sev or "").lower()
-            if s in ("critical","very high","very_high"): return "error"
-            if s in ("high",): return "error"
-            if s in ("medium","moderate"): return "warning"
-            if s in ("low"): return "note"
-            return "warning"
-
-          # carrega JSON do SCA (estrutura pode variar por linguagem)
-          with open("sca-results.json","r") as f:
-            data = json.load(f)
-
-          vulns = []
-          # tenta caminhos comuns
-          if isinstance(data, dict):
-            for key in ("vulnerabilities","issues","alerts","findings"):
-              if key in data and isinstance(data[key], list):
-                vulns = data[key]
-                break
-          if not vulns and isinstance(data, list):
-            vulns = data
-
-          runs = [{
-            "tool": {
-              "driver": {
-                "name": "Veracode SCA",
-                "informationUri": "https://www.veracode.com/",
-                "rules": []
-              }
-            },
-            "results": []
-          }]
-
-          rules_index = {}
-
-          def add_rule(rule_id, name, uri=None, severity=None):
-            if rule_id in rules_index: return
-            rule = {
-              "id": str(rule_id),
-              "name": name or str(rule_id),
-              "shortDescription": {"text": name or str(rule_id)},
-            }
-            if uri: rule["helpUri"] = uri
-            if severity:
-              rule.setdefault("properties",{})["security-severity"] = str(severity)
-            runs[0]["tool"]["driver"]["rules"].append(rule)
-            rules_index[rule_id] = True
-
-          for v in vulns:
-            # campos comuns/tolerantes
-            rule_id = v.get("cve") or v.get("id") or v.get("identifier") or "SCA-UNKNOWN"
-            title   = v.get("title") or v.get("summary") or v.get("name") or str(rule_id)
-            sev     = v.get("severity") or v.get("cvss") or v.get("score")
-            pkg     = v.get("package") or (v.get("library") or {}).get("name") or v.get("component") or "unknown-package"
-            version = v.get("version") or (v.get("library") or {}).get("version") or v.get("component_version") or "unknown-version"
-            path    = (v.get("manifest") or v.get("file") or "package.json")  # palpite razoável
-            url     = v.get("url") or v.get("reference") or v.get("references",[None])[0]
-
-            add_rule(rule_id, title, url, sev)
-
-            message = f"{title} — {pkg}@{version}"
-            level   = sev_to_level(sev)
-
-            # fingerprint estável
-            fp_src = f"{rule_id}|{pkg}|{version}|{title}"
-            fp = hashlib.sha1(fp_src.encode()).hexdigest()
-
-            runs[0]["results"].append({
-              "ruleId": str(rule_id),
-              "level": level,
-              "message": {"text": message},
-              "locations": [{
-                "physicalLocation": {
-                  "artifactLocation": {"uri": path},
-                  "region": {"startLine": 1}
-                }
-              }],
-              "partialFingerprints": {"primaryLocationLineHash": fp}
-            })
-
-          sarif = {
-            "version": "2.1.0",
-            "$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-            "runs": runs
-          }
-          with open("veracode-sca.sarif","w") as f:
-            json.dump(sarif, f, indent=2)
-          print("SCA SARIF escrito em veracode-sca.sarif")
-          PY
-
-      # ---------- Merge dos SARIFs ----------
-      - name: 🧩 Unificar SARIF (STATIC + SCA)
-        run: |
-          python3 - <<'PY'
-          import json
-          with open("veracode-static.sarif") as f: static = json.load(f)
-          with open("veracode-sca.sarif") as f:    sca    = json.load(f)
-
-          # ambos são SARIF 2.1.0; combinamos os 'runs'
-          combined = {
-            "version": "2.1.0",
-            "$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-            "runs": []
-          }
-          for doc in (static, sca):
-            rs = doc.get("runs", [])
-            if isinstance(rs, list):
-              combined["runs"].extend(rs)
-
-          with open("veracode-combined.sarif","w") as f:
-            json.dump(combined, f, indent=2)
-          print("SARIF unificado em veracode-combined.sarif")
-          PY
-
-      # ---------- Upload p/ Code Scanning ----------
-      - name: ☁️ Upload SARIF (Code Scanning)
-        uses: github/codeql-action/upload-sarif@v3
+      - name: 🚀 Veracode Upload & Scan (Policy/Sandbox)
+        uses: veracode/veracode-uploadandscan-action@0.2.8
         with:
-          sarif_file: veracode-combined.sarif
+          vid: ${{ secrets.VID }}
+          vkey: ${{ secrets.VKEY }}
+          appname: ${{ github.repository }}
+          createprofile: true
+          filepath: ${{ steps.pack.outputs.artifact }}
+          version: build-${{ github.run_id }}-${{ github.sha }}
+          deleteincompletescan: 2
+          scantimeout: 60
+          # sandboxname: MeuSandbox
+          # policy: MinhaPolicy
+          # criticality: High
 
-      # ---------- Artefatos (auditoria) ----------
-      - name: 📦 Publicar artifacts
+      - name: 📦 Publicar SARIF/JSON/ZIP como artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: veracode-security-artifacts
+          name: veracode-findings
           path: |
-            analysisPack.zip
-            results-static.json
-            veracode-static.sarif
-            sca-results.json
-            veracode-sca.sarif
-            veracode-combined.sarif
+            results.json
+            veracode-results.sarif
+            ${{ steps.pack.outputs.artifact }}
