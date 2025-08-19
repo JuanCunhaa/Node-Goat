@@ -7,7 +7,8 @@ on:
 
 permissions:
   contents: read
-  security-events: write   # necessário para subir SARIF ao Code Scanning
+  actions: write
+  security-events: write
 
 jobs:
   veracode:
