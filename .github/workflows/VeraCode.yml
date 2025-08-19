@@ -30,7 +30,7 @@ jobs:
       - name: 🧩 Veracode SCA (Agent-Based)
         uses: veracode/veracode-sca@v2.1.9
         env:
-          SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+          SRCCLR_API_TOKEN: ${{ secrets.SCA }}
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           path: .
