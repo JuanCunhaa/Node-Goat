@@ -29,16 +29,16 @@ jobs:
 
       
       - name: 🧩 Veracode SCA (Agent-Based)
-        uses: veracode/veracode-sca@v2.1.9
+        uses: veracode/veracode-sca@v2.1.12   # < atualize
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SCA }}
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ github.token }}
           path: .
-          create-issues: true              # Adiciona no github issues as vulnerabilidades achadas em caso de "true"
-          recursive: true                 # Le todos subdiretorios atrás de mais dependencias
-          # skip-collectors: "npm,gradle"   # Ignora os coletores determinados ali para caso queira ignorar o gradle mas rodar o npm por exemplo
-      
+          create-issues: true
+          recursive: true
+          allow-dirty: true
+
       - name: 📁 Auto Packager (gera e renomeia zip)
         id: pack
         shell: bash
