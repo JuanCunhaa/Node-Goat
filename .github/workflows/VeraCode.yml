@@ -9,6 +9,9 @@ permissions:
   contents: read
   actions: write
   security-events: write
+  issues: write           # 👈 necessário pra criar labels/issues
+  pull-requests: write    # 👈 algumas automações também usam
+
 
 jobs:
   veracode:
