@@ -26,6 +26,18 @@ jobs:
           curl -fsS https://tools.veracode.com/veracode-cli/install | sh
           ./veracode --version
 
+      
+      - name: 🧩 Veracode SCA (Agent-Based)
+        uses: veracode/veracode-sca@v2.1.9
+        env:
+          SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path: .
+          create-issues: true              # Adiciona no github issues as vulnerabilidades achadas em caso de "true"
+          recursive: true                 # Le todos subdiretorios atrás de mais dependencias
+          # skip-collectors: "npm,gradle"   # Ignora os coletores determinados ali para caso queira ignorar o gradle mas rodar o npm por exemplo
+      
       - name: 📁 Auto Packager (gera e renomeia zip)
         id: pack
         shell: bash
