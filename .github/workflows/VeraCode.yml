@@ -1,98 +1,36 @@
-name: Veracode AutoPackager + Pipeline Scan + SARIF
+name: CI + Security
 
 on:
   push:
     branches: [ main ]
   pull_request:
-
-permissions:
-  contents: read
-  actions: write
-  security-events: write
-  issues: write           # 👈 necessário pra criar labels/issues
-  pull-requests: write    # 👈 algumas automações também usam
-
+  workflow_dispatch:  # opcional: executar manualmente
 
 jobs:
-  veracode:
+  build:
+    name: Build & gerar artifact
     runs-on: ubuntu-latest
     steps:
-      - name: 🏁 Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # (Opcional) Build da sua app aqui, se precisar gerar binários antes do packager
-      # - name: 🔧 Build
-      #   run: |
-      #     ./gradlew build       # mvn package / npm run build / dotnet publish ...
-
-      - name: 📦 Instalar Veracode CLI
+      # 👉 coloque aqui seus passos de build/test
+      # Exemplo fictício gerando a pasta "build/"
+      - name: Build
         run: |
-          curl -fsS https://tools.veracode.com/veracode-cli/install | sh
-          ./veracode --version
+          mkdir -p build
+          echo "demo" > build/readme.txt
 
-      
-      - name: 🧩 Veracode SCA (Agent-Based)
-        uses: veracode/veracode-sca@v2.1.12   # < atualize
-        env:
-          SRCCLR_API_TOKEN: ${{ secrets.SCA }}
-        with:
-          github_token: ${{ github.token }}
-          path: .
-          create-issues: true
-          recursive: true
-          allow-dirty: true
-
-      - name: 📁 Auto Packager (gera e renomeia zip)
-        id: pack
-        shell: bash
-        run: |
-          set -euo pipefail
-          out_dir="veracode-out"
-          mkdir -p "$out_dir"
-
-          # Empacota automaticamente (detecta stack)
-          ./veracode package --source . --output "$out_dir" --trust
-
-          # Pega o primeiro .zip gerado e renomeia para analysisPack.zip na raiz do workspace
-          zip_file=$(find "$out_dir" -maxdepth 1 -type f -name '*.zip' | head -n1)
-          if [ -z "${zip_file:-}" ]; then
-            echo "Nenhum .zip gerado pelo Auto Packager." >&2
-            echo "Conteúdo de $out_dir:"
-            ls -lah "$out_dir" || true
-            exit 1
-          fi
-
-          final_zip="$GITHUB_WORKSPACE/analysisPack.zip"
-          mv -f "$zip_file" "$final_zip"
-          echo "✅ Pacote final: $final_zip"
-
-          # Exporta para outros passos
-          echo "artifact=$final_zip" >> "$GITHUB_OUTPUT"
-
-      - name: 🔍 Veracode Pipeline Scan (gera JSON)
-        uses: veracode/Veracode-pipeline-scan-action@v1.0.18
-        with:
-          vid: ${{ secrets.VID }}                  # Veracode API ID
-          vkey: ${{ secrets.VKEY }}                # Veracode API Key
-          file: ${{ steps.pack.outputs.artifact }} # analysisPack.zip gerado acima
-          json_output: true
-          json_output_file: results.json           # será usado no conversor
-
-      - name: 🔄 Converter JSON -> SARIF + Upload
-        uses: veracode/veracode-pipeline-scan-results-to-sarif@v2.0.3
-        with:
-          scan-type: pipeline
-          pipeline-results-json: results.json
-          output-results-sarif: veracode-results.sarif
-          githubToken: ${{ github.token }}         # faz upload automático pro Code Scanning
-
-      # (Opcional) Guarda os arquivos mesmo se o upload falhar (ex.: privado sem GHAS)
-      - name: 📦 Publicar SARIF/JSON como artifact
-        if: always()
+      # 🔼 Faça upload do artifact que o template espera
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: veracode-findings
-          path: |
-            results.json
-            veracode-results.sarif
-            ${{ steps.pack.outputs.artifact }}
+          name: build-artifact                 # ← nome que vc vai passar no with:
+          path: build                          # ← path que vc vai passar no with:
+          
+  security-scans:
+    uses: JuanCunhaa/Veracode-Pipelines/.github/workflows/ci_security_scans.yaml@main
+    secrets: inherit
+    with:
+      build_artifact_name: build-artifact
+      build_artifact_path: build
+                      # ou "meu-app"
