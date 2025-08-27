@@ -4,33 +4,52 @@ on:
   push:
     branches: [ main ]
   pull_request:
-  workflow_dispatch:  # opcional: executar manualmente
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build & gerar artifact
+    name: Build (Node + npm install) & gerar artifact
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # 👉 coloque aqui seus passos de build/test
-      # Exemplo fictício gerando a pasta "build/"
-      - name: Build
-        run: |
-          mkdir -p build
-          echo "demo" > build/readme.txt
+      # Instala Node LTS + cache do npm
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
 
-      # 🔼 Faça upload do artifact que o template espera
+      # Instala dependências
+      - name: Install deps
+        run: npm install
+
+      # Aqui você pode rodar testes, se tiver
+      - name: Test
+        run: npm test --if-present
+
+      # Empacota todo o projeto como build/
+      - name: Preparar pasta build/
+        run: |
+          rm -rf build
+          mkdir -p build
+          cp -R ./* build/ || true
+          echo "Conteúdo final da pasta build/"
+          ls -lah build || true
+
+      # Publica artifact para o template do Veracode
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifact                 # ← nome que vc vai passar no with:
-          path: build                          # ← path que vc vai passar no with:
-          
+          name: build-artifact
+          path: build
+          if-no-files-found: error
+
   security-scans:
+    name: Security Scans (Veracode)
+    needs: build
     uses: JuanCunhaa/Veracode-Pipelines/.github/workflows/ci_security_scans.yaml@main
     secrets: inherit
     with:
       build_artifact_name: build-artifact
       build_artifact_path: build
-                      # ou "meu-app"
