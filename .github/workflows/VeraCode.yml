@@ -36,8 +36,8 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifact
-          path: build
+          name: artifact-build
+          path: build-artifact
           if-no-files-found: error
 
   security-scans:
@@ -45,3 +45,6 @@ jobs:
     needs: build
     uses: JuanCunhaa/Veracode-Pipelines/.github/workflows/ci_security_scans.yaml@main
     secrets: inherit
+    with:
+      build_artifact_name: artifact-build
+      build_artifact_path: build-artifact
