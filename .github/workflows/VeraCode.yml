@@ -37,7 +37,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: artifact-build
-          path: build-artifact
+          path: build
           if-no-files-found: error
 
   security-scans:
@@ -47,4 +47,4 @@ jobs:
     secrets: inherit
     with:
       build_artifact_name: artifact-build
-      build_artifact_path: build-artifact
+      build_artifact_path: build
